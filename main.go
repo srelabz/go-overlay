@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"sync"
+	"time"
 
 	"github.com/creack/pty"
 	"github.com/pelletier/go-toml/v2"
@@ -18,6 +20,7 @@ type Service struct {
 	Name    string   `toml:"name"`
 	Command string   `toml:"command"`
 	Args    []string `toml:"args"`
+	LogFile string   `toml:"log_file,omitempty"`
 }
 
 type Config struct {
@@ -70,7 +73,41 @@ func loadServices(configFile string) error {
 	return nil
 }
 
+func tailLogFile(filePath, serviceName string) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		_info("Error opening log file for service", serviceName, ":", err)
+		return
+	}
+	defer file.Close()
+
+	if _, err := file.Seek(0, io.SeekEnd); err != nil {
+		_info("Error seeking log file for service", serviceName, ":", err)
+		return
+	}
+
+	scanner := bufio.NewScanner(file)
+	for {
+		for scanner.Scan() {
+			line := scanner.Text()
+			_print(fmt.Sprintf("[%s] %s", serviceName, line))
+		}
+		if err := scanner.Err(); err != nil {
+			_info("Error reading log file for service", serviceName, ":", err)
+			return
+		}
+
+		time.Sleep(1 * time.Second)
+	}
+}
+
 func startServiceWithPTY(service Service) error {
+	if service.LogFile != "" {
+		_info("Service", service.Name, "is configured to use log file:", service.LogFile)
+		go tailLogFile(service.LogFile, service.Name)
+		return nil
+	}
+
 	_info("Starting service:", service.Name)
 
 	cmd := exec.Command(service.Command, service.Args...)
@@ -83,11 +120,20 @@ func startServiceWithPTY(service Service) error {
 
 	_info("Service", service.Name, "started successfully (PID:", cmd.Process.Pid, ")")
 
-	go func() {
-		_, _ = io.Copy(os.Stdout, ptmx)
-	}()
+	go prefixLogs(ptmx, service.Name)
 
 	return cmd.Wait()
+}
+
+func prefixLogs(reader *os.File, serviceName string) {
+	scanner := bufio.NewScanner(reader)
+	for scanner.Scan() {
+		line := scanner.Text()
+		fmt.Printf("[%s] %s\n", serviceName, line)
+	}
+	if err := scanner.Err(); err != nil {
+		_info("Error reading logs for service", serviceName, ":", err)
+	}
 }
 
 func _info(a ...interface{}) {

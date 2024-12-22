@@ -1,9 +1,11 @@
 [[services]]
 name = "salt-master"
 command = "/usr/bin/salt-master"
-args = ["-d"]
+args = ["-l", "info"]
+# args = ["-d"]
+# log_file = "/var/log/salt/master"
 
 [[services]]
 name = "salt-api"
 command = "/usr/bin/salt-api"
-args = ["-l", "debug"]
+args = ["-l", "info"]
