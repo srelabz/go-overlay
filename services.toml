@@ -1,0 +1,9 @@
+[[services]]
+name = "salt-master"
+command = "/usr/bin/salt-master"
+args = ["-d"]
+
+[[services]]
+name = "salt-api"
+command = "/usr/bin/salt-api"
+args = ["-l", "debug"]
