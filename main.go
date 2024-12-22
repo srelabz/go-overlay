@@ -1,14 +1,18 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
+	"sync"
 
+	"github.com/creack/pty"
 	"github.com/pelletier/go-toml/v2"
 	"github.com/spf13/cobra"
 )
+
+var debugMode = true
 
 type Service struct {
 	Name    string   `toml:"name"`
@@ -32,13 +36,13 @@ func main() {
 	}
 
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		_info("Error:", err)
 		os.Exit(1)
 	}
 }
 
 func loadServices(configFile string) error {
-	_debug(true, "Loading services from %s\n", configFile)
+	_info("Loading services from", configFile)
 
 	file, err := os.Open(configFile)
 	if err != nil {
@@ -51,40 +55,69 @@ func loadServices(configFile string) error {
 		return fmt.Errorf("error parsing config file %s: %v", configFile, err)
 	}
 
-	servicesJSON, _ := json.MarshalIndent(config.Services, "", "  ")
-	_debug(true, "Loaded services: %s\n", servicesJSON)
-
+	var wg sync.WaitGroup
 	for _, service := range config.Services {
-		_debug(true, "Starting service: %s\n", service.Name)
-		cmd := exec.Command(service.Command, service.Args...)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-
-		if err := cmd.Start(); err != nil {
-			_debug(true, "Error starting service %s: %v\n", service.Name, err)
-		} else {
-			_debug(true, "Service %s started successfully (PID: %d)\n", service.Name, cmd.Process.Pid)
-		}
+		wg.Add(1)
+		go func(s Service) {
+			defer wg.Done()
+			if err := startServiceWithPTY(s); err != nil {
+				_info("Error starting service", s.Name, ":", err)
+			}
+		}(service)
 	}
 
+	wg.Wait()
 	return nil
 }
 
-func logFunctionEntry() {
-	fmt.Println("Function entry logged.")
+func startServiceWithPTY(service Service) error {
+	_info("Starting service:", service.Name)
+
+	cmd := exec.Command(service.Command, service.Args...)
+
+	ptmx, err := pty.Start(cmd)
+	if err != nil {
+		return fmt.Errorf("error starting PTY for service %s: %v", service.Name, err)
+	}
+	defer func() { _ = ptmx.Close() }()
+
+	_info("Service", service.Name, "started successfully (PID:", cmd.Process.Pid, ")")
+
+	go func() {
+		_, _ = io.Copy(os.Stdout, ptmx)
+	}()
+
+	return cmd.Wait()
 }
 
-func _debug(enabled bool, format string, args ...interface{}) {
-	if enabled {
-		fmt.Printf(format, args...)
+func _info(a ...interface{}) {
+	_table("INFO", a...)
+}
+
+func _print(a ...interface{}) {
+	message := fmt.Sprintln(a...)
+	fmt.Println(message)
+}
+
+func _debug(isDebug bool, a ...interface{}) {
+	if isDebug && !debugMode {
+		return
 	}
+	message := fmt.Sprintln(a...)
+	fmt.Println(message)
+}
+
+func _table(level string, a ...interface{}) {
+	prefix := fmt.Sprintf("[%s]", level)
+	message := fmt.Sprintln(a...)
+	fmt.Println(prefix, message)
 }
 
 func _printEnvVariables() {
-	logFunctionEntry()
-	_debug(true, "START - ENVIRONMENT VARS\n")
+	_info("Function entry logged.")
+	_debug(true, "START - ENVIRONMENT VARS")
 	for _, env := range os.Environ() {
-		fmt.Println(env)
+		_print(env)
 	}
-	_debug(true, "CLOSE - ENVIRONMENT VARS\n")
+	_debug(true, "CLOSE - ENVIRONMENT VARS")
 }
