@@ -1,0 +1,68 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+    branches:
+      - main
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Create Git Tag
+      uses: mathieudutour/github-tag-action@v6.2
+      id: create_tag
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        default_bump: patch
+        tag_prefix: v
+        release_branches: main
+        create_annotated_tag: false
+        fetch_all_tags: false
+        dry_run: false
+
+    - name: Print New Tag
+      if: steps.create_tag.outputs.new_tag != ''
+      run: |
+        echo "New Tag: ${{ steps.create_tag.outputs.new_tag }}"
+
+    - name: Set up Go
+      uses: actions/setup-go@v5.2.0
+      with:
+        go-version: '1.x'
+
+    - name: Get Git Tag
+      id: git_tag
+      run: echo "::set-output name=tag::$(git describe --tags --always)"
+
+    - name: Build binary
+      run: |
+        CGO_ENABLED=0 GOOS=linux go build -a -ldflags="-X main.version=${{ steps.git_tag.outputs.tag }}" -o service-manager .
+
+    - name: Create Release
+      if: steps.create_tag.outputs.new_tag != ''
+      uses: actions/create-release@v1
+      id: create_release
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ steps.create_tag.outputs.new_tag }}
+        release_name: Release ${{ steps.create_tag.outputs.new_tag }}
+        draft: false
+        prerelease: false
+
+    - name: Upload Release Asset
+      if: steps.create_tag.outputs.new_tag != ''
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./service-manager
+        asset_name: service-manager
+        asset_content_type: application/octet-stream

@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"time"
 
@@ -14,13 +15,17 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var debugMode = true
+var debugMode bool
+var version = "dev"
 
 type Service struct {
-	Name    string   `toml:"name"`
-	Command string   `toml:"command"`
-	Args    []string `toml:"args"`
-	LogFile string   `toml:"log_file,omitempty"`
+	Name      string   `toml:"name"`
+	Command   string   `toml:"command"`
+	Args      []string `toml:"args"`
+	LogFile   string   `toml:"log_file,omitempty"`
+	PreScript string   `toml:"pre_script,omitempty"`
+	DependsOn string   `toml:"depends_on,omitempty"`
+	WaitAfter int      `toml:"wait_after,omitempty"`
 }
 
 type Config struct {
@@ -28,15 +33,21 @@ type Config struct {
 }
 
 func main() {
-	_printEnvVariables()
+	fmt.Printf("TM Orchestrator - Version: %s\n", version)
 
 	var rootCmd = &cobra.Command{
 		Use:   "entrypoint",
 		Short: "Custom Docker entrypoint in Go",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if debugMode {
+				_printEnvVariables()
+			}
 			return loadServices("services.toml")
 		},
 	}
+
+	// --debug
+	rootCmd.Flags().BoolVar(&debugMode, "debug", false, "Enable debug mode")
 
 	if err := rootCmd.Execute(); err != nil {
 		_info("Error:", err)
@@ -45,7 +56,7 @@ func main() {
 }
 
 func loadServices(configFile string) error {
-	_info("Loading services from", configFile)
+	_info("Loading services from ", configFile)
 
 	file, err := os.Open(configFile)
 	if err != nil {
@@ -58,19 +69,140 @@ func loadServices(configFile string) error {
 		return fmt.Errorf("error parsing config file %s: %v", configFile, err)
 	}
 
+	startedServices := make(map[string]bool)
+	var mu sync.Mutex
+
+	maxLength := getLongestServiceNameLength(config.Services)
+
 	var wg sync.WaitGroup
 	for _, service := range config.Services {
 		wg.Add(1)
 		go func(s Service) {
 			defer wg.Done()
-			if err := startServiceWithPTY(s); err != nil {
+
+			if s.PreScript != "" {
+				_info("Executing pre-script for service:", s.Name)
+				if err := runPreScript(s.PreScript); err != nil {
+					_info("Error executing pre-script for service", s.Name, ":", err)
+					return
+				}
+			}
+
+			if s.DependsOn != "" {
+				_info("Service", s.Name, "waiting for dependency:", s.DependsOn)
+				waitForDependency(s.DependsOn, s.WaitAfter, &mu, startedServices)
+			}
+
+			if err := startServiceWithPTY(s, maxLength); err != nil {
 				_info("Error starting service", s.Name, ":", err)
 			}
+
+			mu.Lock()
+			startedServices[s.Name] = true
+			mu.Unlock()
 		}(service)
 	}
 
 	wg.Wait()
 	return nil
+}
+
+func isBashAvailable() bool {
+	_, err := exec.LookPath("bash")
+	return err == nil
+}
+
+func runPreScript(scriptPath string) error {
+	shell := "sh"
+	if isBashAvailable() {
+		shell = "bash"
+	}
+
+	cmd := exec.Command(shell, "-c", scriptPath)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Env = os.Environ()
+
+	return cmd.Run()
+}
+
+func waitForDependency(depName string, waitAfter int, mu *sync.Mutex, startedServices map[string]bool) {
+	for {
+		mu.Lock()
+		depStarted := startedServices[depName]
+		mu.Unlock()
+
+		if depStarted {
+			_info("Dependency", depName, "is up. Waiting", waitAfter, "seconds before starting dependent service.")
+			time.Sleep(time.Duration(waitAfter) * time.Second)
+			return
+		}
+
+		_info("Waiting for dependency:", depName)
+		time.Sleep(2 * time.Second)
+	}
+}
+
+func joinArgs(args []string) string {
+	return strings.Join(args, " ")
+}
+
+func startServiceWithPTY(service Service, maxLength int) error {
+	if service.LogFile != "" {
+		_info("Service", service.Name, "is configured to use log file:", service.LogFile)
+		go tailLogFile(service.LogFile, service.Name)
+		return nil
+	}
+
+	_info("Starting service:", service.Name)
+
+	fullCommand := fmt.Sprintf("%s %s", service.Command, joinArgs(service.Args))
+	shell := "sh"
+	if isBashAvailable() {
+		shell = "bash"
+	}
+	cmd := exec.Command(shell, "-c", fullCommand)
+	cmd.Env = os.Environ()
+
+	ptmx, err := pty.Start(cmd)
+	if err != nil {
+		return fmt.Errorf("error starting PTY for service %s: %v", service.Name, err)
+	}
+	defer func() { _ = ptmx.Close() }()
+
+	_info("Service", service.Name, "started successfully (PID:", cmd.Process.Pid, ")")
+
+	go prefixLogs(ptmx, service.Name, maxLength)
+
+	return cmd.Wait()
+}
+
+func prefixLogs(reader *os.File, serviceName string, maxLength int) {
+	formattedName := formatServiceName(serviceName, maxLength)
+	scanner := bufio.NewScanner(reader)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line != "" {
+			fmt.Printf("[%s] %s\n", formattedName, line)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		_info("Error reading logs for service", serviceName, ":", err)
+	}
+}
+
+func getLongestServiceNameLength(services []Service) int {
+	maxLength := 0
+	for _, service := range services {
+		if len(service.Name) > maxLength {
+			maxLength = len(service.Name)
+		}
+	}
+	return maxLength
+}
+
+func formatServiceName(serviceName string, maxLength int) string {
+	return fmt.Sprintf("%-*s", maxLength, serviceName)
 }
 
 func tailLogFile(filePath, serviceName string) {
@@ -96,43 +228,7 @@ func tailLogFile(filePath, serviceName string) {
 			_info("Error reading log file for service", serviceName, ":", err)
 			return
 		}
-
 		time.Sleep(1 * time.Second)
-	}
-}
-
-func startServiceWithPTY(service Service) error {
-	if service.LogFile != "" {
-		_info("Service", service.Name, "is configured to use log file:", service.LogFile)
-		go tailLogFile(service.LogFile, service.Name)
-		return nil
-	}
-
-	_info("Starting service:", service.Name)
-
-	cmd := exec.Command(service.Command, service.Args...)
-
-	ptmx, err := pty.Start(cmd)
-	if err != nil {
-		return fmt.Errorf("error starting PTY for service %s: %v", service.Name, err)
-	}
-	defer func() { _ = ptmx.Close() }()
-
-	_info("Service", service.Name, "started successfully (PID:", cmd.Process.Pid, ")")
-
-	go prefixLogs(ptmx, service.Name)
-
-	return cmd.Wait()
-}
-
-func prefixLogs(reader *os.File, serviceName string) {
-	scanner := bufio.NewScanner(reader)
-	for scanner.Scan() {
-		line := scanner.Text()
-		fmt.Printf("[%s] %s\n", serviceName, line)
-	}
-	if err := scanner.Err(); err != nil {
-		_info("Error reading logs for service", serviceName, ":", err)
 	}
 }
 
@@ -141,7 +237,7 @@ func _info(a ...interface{}) {
 }
 
 func _print(a ...interface{}) {
-	message := fmt.Sprintln(a...)
+	message := fmt.Sprint(a...)
 	fmt.Println(message)
 }
 
@@ -149,21 +245,28 @@ func _debug(isDebug bool, a ...interface{}) {
 	if isDebug && !debugMode {
 		return
 	}
-	message := fmt.Sprintln(a...)
+	message := fmt.Sprint(a...)
 	fmt.Println(message)
 }
 
 func _table(level string, a ...interface{}) {
 	prefix := fmt.Sprintf("[%s]", level)
-	message := fmt.Sprintln(a...)
+	message := fmt.Sprint(a...)
 	fmt.Println(prefix, message)
 }
 
 func _printEnvVariables() {
 	_info("Function entry logged.")
-	_debug(true, "START - ENVIRONMENT VARS")
-	for _, env := range os.Environ() {
-		_print(env)
+	_debug(true, "| ---------------- START - ENVIRONMENT VARS ---------------- |")
+
+	envVars := os.Environ()
+	for i, env := range envVars {
+		if i == len(envVars)-1 {
+			fmt.Printf("%s", env)
+		} else {
+			fmt.Printf("%s\n", env)
+		}
 	}
-	_debug(true, "CLOSE - ENVIRONMENT VARS")
+
+	_debug(true, "| ---------------- CLOSE - ENVIRONMENT VARS ---------------- |")
 }
