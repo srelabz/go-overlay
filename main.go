@@ -24,6 +24,7 @@ type Service struct {
 	Args      []string `toml:"args"`
 	LogFile   string   `toml:"log_file,omitempty"`
 	PreScript string   `toml:"pre_script,omitempty"`
+	PosScript string   `toml:"pos_script,omitempty"`
 	DependsOn string   `toml:"depends_on,omitempty"`
 	WaitAfter int      `toml:"wait_after,omitempty"`
 	Enabled   bool     `toml:"enabled,omitempty"`
@@ -44,6 +45,7 @@ func main() {
 			if debugMode {
 				_printEnvVariables()
 			}
+
 			return loadServices("/services.toml")
 		},
 	}
@@ -112,6 +114,19 @@ func loadServices(configFile string) error {
 
 			if err := startServiceWithPTY(s, maxLength); err != nil {
 				_info("Error starting service ", s.Name, ": ", err)
+			}
+
+			if s.PosScript != "" {
+				_info("Executing post-script for service: ", s.Name)
+				if err := os.Chmod(s.PosScript, 0755); err != nil {
+					_info("Error setting execute permission for script ", s.PosScript, ": ", err)
+					return
+				}
+
+				if err := runPreScript(s.PosScript); err != nil {
+					_info("Error executing post-script for service ", s.Name, ": ", err)
+					return
+				}
 			}
 
 			mu.Lock()
