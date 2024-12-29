@@ -26,6 +26,8 @@ type Service struct {
 	PreScript string   `toml:"pre_script,omitempty"`
 	DependsOn string   `toml:"depends_on,omitempty"`
 	WaitAfter int      `toml:"wait_after,omitempty"`
+	Enabled   bool     `toml:"enabled,omitempty"`
+	User      string   `toml:"user,omitempty"`
 }
 
 type Config struct {
@@ -42,7 +44,7 @@ func main() {
 			if debugMode {
 				_printEnvVariables()
 			}
-			return loadServices("services.toml")
+			return loadServices("/services.toml")
 		},
 	}
 
@@ -76,25 +78,40 @@ func loadServices(configFile string) error {
 
 	var wg sync.WaitGroup
 	for _, service := range config.Services {
+		if !service.Enabled {
+			service.Enabled = true
+		}
+
+		if !service.Enabled {
+			_info("Service ", service.Name, " is disabled, skipping")
+			continue
+		}
+
 		wg.Add(1)
 		go func(s Service) {
 			defer wg.Done()
 
 			if s.PreScript != "" {
-				_info("Executing pre-script for service:", s.Name)
+				_info("Executing pre-script for service: ", s.Name)
+
+				if err := os.Chmod(s.PreScript, 0755); err != nil {
+					_info("Error setting execute permission for script ", s.PreScript, ": ", err)
+					return
+				}
+
 				if err := runPreScript(s.PreScript); err != nil {
-					_info("Error executing pre-script for service", s.Name, ":", err)
+					_info("Error executing pre-script for service ", s.Name, ": ", err)
 					return
 				}
 			}
 
 			if s.DependsOn != "" {
-				_info("Service", s.Name, "waiting for dependency:", s.DependsOn)
+				_info("Service ", s.Name, " waiting for dependency: ", s.DependsOn)
 				waitForDependency(s.DependsOn, s.WaitAfter, &mu, startedServices)
 			}
 
 			if err := startServiceWithPTY(s, maxLength); err != nil {
-				_info("Error starting service", s.Name, ":", err)
+				_info("Error starting service ", s.Name, ": ", err)
 			}
 
 			mu.Lock()
@@ -133,12 +150,12 @@ func waitForDependency(depName string, waitAfter int, mu *sync.Mutex, startedSer
 		mu.Unlock()
 
 		if depStarted {
-			_info("Dependency", depName, "is up. Waiting", waitAfter, "seconds before starting dependent service.")
+			_info("Dependency ", depName, " is up. Waiting ", waitAfter, " seconds before starting dependent service.")
 			time.Sleep(time.Duration(waitAfter) * time.Second)
 			return
 		}
 
-		_info("Waiting for dependency:", depName)
+		_info("Waiting for dependency: ", depName)
 		time.Sleep(2 * time.Second)
 	}
 }
@@ -149,19 +166,28 @@ func joinArgs(args []string) string {
 
 func startServiceWithPTY(service Service, maxLength int) error {
 	if service.LogFile != "" {
-		_info("Service", service.Name, "is configured to use log file:", service.LogFile)
+		_info("Service ", service.Name, " is configured to use log file: ", service.LogFile)
 		go tailLogFile(service.LogFile, service.Name)
 		return nil
 	}
 
-	_info("Starting service:", service.Name)
+	_info("Starting service: ", service.Name)
 
 	fullCommand := fmt.Sprintf("%s %s", service.Command, joinArgs(service.Args))
 	shell := "sh"
 	if isBashAvailable() {
 		shell = "bash"
 	}
-	cmd := exec.Command(shell, "-c", fullCommand)
+
+	var cmd *exec.Cmd
+	if service.User != "" {
+		// Usando su para exe c/ user do services.toml
+		fullCommand = fmt.Sprintf("su -c '%s' %s", fullCommand, service.User)
+		cmd = exec.Command(shell, "-c", fullCommand)
+	} else {
+		cmd = exec.Command(shell, "-c", fullCommand)
+	}
+
 	cmd.Env = os.Environ()
 
 	ptmx, err := pty.Start(cmd)
@@ -170,7 +196,7 @@ func startServiceWithPTY(service Service, maxLength int) error {
 	}
 	defer func() { _ = ptmx.Close() }()
 
-	_info("Service", service.Name, "started successfully (PID:", cmd.Process.Pid, ")")
+	_info("Service ", service.Name, " started successfully (PID: ", cmd.Process.Pid, ")")
 
 	go prefixLogs(ptmx, service.Name, maxLength)
 
@@ -187,7 +213,7 @@ func prefixLogs(reader *os.File, serviceName string, maxLength int) {
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		_info("Error reading logs for service", serviceName, ":", err)
+		_info("Error reading logs for service ", serviceName, ": ", err)
 	}
 }
 
@@ -208,13 +234,13 @@ func formatServiceName(serviceName string, maxLength int) string {
 func tailLogFile(filePath, serviceName string) {
 	file, err := os.Open(filePath)
 	if err != nil {
-		_info("Error opening log file for service", serviceName, ":", err)
+		_info("Error opening log file for service ", serviceName, ": ", err)
 		return
 	}
 	defer file.Close()
 
 	if _, err := file.Seek(0, io.SeekEnd); err != nil {
-		_info("Error seeking log file for service", serviceName, ":", err)
+		_info("Error seeking log file for service ", serviceName, ": ", err)
 		return
 	}
 
@@ -225,7 +251,7 @@ func tailLogFile(filePath, serviceName string) {
 			_print(fmt.Sprintf("[%s] %s", serviceName, line))
 		}
 		if err := scanner.Err(); err != nil {
-			_info("Error reading log file for service", serviceName, ":", err)
+			_info("Error reading log file for service ", serviceName, ": ", err)
 			return
 		}
 		time.Sleep(1 * time.Second)
