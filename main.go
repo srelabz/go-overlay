@@ -16,7 +16,7 @@ import (
 )
 
 var debugMode bool
-var version = "dev"
+var version = "v0.1.0"
 
 type Service struct {
 	Name      string   `toml:"name"`
@@ -94,17 +94,19 @@ func loadServices(configFile string) error {
 			defer wg.Done()
 
 			if s.PreScript != "" {
-				_info("Executing pre-script for service: ", s.Name)
+				_info("| === PRE-SCRIPT START --- [SERVICE: ", s.Name, "] === |")
 
 				if err := os.Chmod(s.PreScript, 0755); err != nil {
-					_info("Error setting execute permission for script ", s.PreScript, ": ", err)
+					_info("[PRE-SCRIPT ERROR] Error setting execute permission for script ", s.PreScript, ": ", err)
 					return
 				}
 
-				if err := runPreScript(s.PreScript); err != nil {
-					_info("Error executing pre-script for service ", s.Name, ": ", err)
+				if err := runScript(s.PreScript); err != nil {
+					_info("[PRE-SCRIPT ERROR] Error executing pre-script for service ", s.Name, ": ", err)
 					return
 				}
+
+				_info("| === PRE-SCRIPT END --- [SERVICE: ", s.Name, "] === |")
 			}
 
 			if s.DependsOn != "" {
@@ -112,26 +114,57 @@ func loadServices(configFile string) error {
 				waitForDependency(s.DependsOn, s.WaitAfter, &mu, startedServices)
 			}
 
-			if err := startServiceWithPTY(s, maxLength); err != nil {
-				_info("Error starting service ", s.Name, ": ", err)
-			}
+			// Create channel to signal service completion
+			serviceDone := make(chan error, 1)
+			serviceExited := make(chan struct{})
 
-			if s.PosScript != "" {
-				_info("Executing post-script for service: ", s.Name)
-				if err := os.Chmod(s.PosScript, 0755); err != nil {
-					_info("Error setting execute permission for script ", s.PosScript, ": ", err)
-					return
-				}
+			// Start service in goroutine
+			go func() {
+				err := startServiceWithPTY(s, maxLength)
+				serviceDone <- err
+				close(serviceExited)
+			}()
 
-				if err := runPreScript(s.PosScript); err != nil {
-					_info("Error executing post-script for service ", s.Name, ": ", err)
-					return
-				}
-			}
-
+			// Wait for service to start
 			mu.Lock()
 			startedServices[s.Name] = true
 			mu.Unlock()
+
+			// Wait for service to exit and handle post-script
+			postScriptDone := make(chan struct{})
+			go func() {
+				// TODO - Melhorar isso aqui, sleep nunca eh legal
+				// Wait for service to be fully started before running post-script
+				time.Sleep(7 * time.Second)
+
+				if s.PosScript != "" {
+					_info("| === POST-SCRIPT START --- [SERVICE: ", s.Name, "] === |")
+
+					if err := os.Chmod(s.PosScript, 0755); err != nil {
+						_info("[POST-SCRIPT ERROR] Error setting execute permission for script ", s.PosScript, ": ", err)
+						postScriptDone <- struct{}{}
+						return
+					}
+
+					if err := runScript(s.PosScript); err != nil {
+						_info("[POST-SCRIPT ERROR] Error executing post-script for service ", s.Name, ": ", err)
+						postScriptDone <- struct{}{}
+						return
+					}
+
+					_info("| === POST-SCRIPT END --- [SERVICE: ", s.Name, "] === |")
+				}
+				postScriptDone <- struct{}{}
+			}()
+
+			// Handle service errors
+			if err := <-serviceDone; err != nil {
+				_info("Error starting service ", s.Name, ": ", err)
+			}
+
+			// Wait for post-script to complete
+			<-postScriptDone
+
 		}(service)
 	}
 
@@ -144,7 +177,7 @@ func isBashAvailable() bool {
 	return err == nil
 }
 
-func runPreScript(scriptPath string) error {
+func runScript(scriptPath string) error {
 	shell := "sh"
 	if isBashAvailable() {
 		shell = "bash"
@@ -196,7 +229,6 @@ func startServiceWithPTY(service Service, maxLength int) error {
 
 	var cmd *exec.Cmd
 	if service.User != "" {
-		// Usando su para exe c/ user do services.toml
 		fullCommand = fmt.Sprintf("su -c '%s' %s", fullCommand, service.User)
 		cmd = exec.Command(shell, "-c", fullCommand)
 	} else {
