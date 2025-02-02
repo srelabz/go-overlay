@@ -29,7 +29,7 @@ jobs:
       run: |
         git config --global user.name "tarcisio.miranda"
         git config --global user.email "eu@tarcisio.me"
-        git clone git@gitea.tarcisio.me:tarcisio.miranda/go-entrypoint.git
+        git clone git@gitea.tarcisio.me:tarcisio.miranda/go-entrypoint.git .
 
     - name: Print New Tag
       if: steps.create_tag.outputs.new_tag != ''
