@@ -12,20 +12,24 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4.2.2
+    - name: Adicionar IP ao /etc/hosts
+      run: |
+        echo "192.168.29.2 gitea.tarcisio.me" | sudo tee -a /etc/hosts
+        echo "3.134.39.220 ngrok.1timo.com" | sudo tee -a /etc/hosts
+        echo "54.156.14.194 docker.io" | sudo tee -a /etc/hosts
 
-    - name: Create Git Tag
-      uses: mathieudutour/github-tag-action@v6.2
-      id: create_tag
-      with:
-        github_token: ${{ secrets.GITHUB_TOKEN }}
-        default_bump: patch
-        tag_prefix: v
-        release_branches: main
-        create_annotated_tag: false
-        fetch_all_tags: false
-        dry_run: false
+    - name: Configurar SSH
+      run: |
+        mkdir -p ~/.ssh
+        echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+        chmod 600 ~/.ssh/id_rsa
+        ssh-keyscan gitea.tarcisio.me >> ~/.ssh/known_hosts
+
+    - name: Configurar Git para SSH
+      run: |
+        git config --global user.name "tarcisio.miranda"
+        git config --global user.email "eu@tarcisio.me"
+        git clone git@gitea.tarcisio.me:tarcisio.miranda/go-entrypoint.git
 
     - name: Print New Tag
       if: steps.create_tag.outputs.new_tag != ''
