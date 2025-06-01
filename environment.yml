@@ -1,0 +1,11 @@
+name: go-entrypoint
+channels:
+  - conda-forge
+dependencies:
+  - go=1.23
+  - git
+  - make
+  - bash
+  - curl
+  - pip
+  - pre-commit
