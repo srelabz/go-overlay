@@ -1,11 +1,37 @@
-[[services]]
-name = "salt-master"
-command = "/usr/bin/salt-master"
-args = ["-l", "info"]
-# args = ["-d"]
-# log_file = "/var/log/salt/master"
+# TM Orchestrator Configuration
+# Timeouts configuráveis (em segundos)
+[timeouts]
+post_script_timeout = 5      # Tempo para executar post-scripts
+service_shutdown_timeout = 15 # Tempo para shutdown graceful de cada serviço
+global_shutdown_timeout = 45  # Tempo total para shutdown do sistema
+dependency_wait_timeout = 120 # Tempo máximo para aguardar dependências
 
 [[services]]
-name = "salt-api"
-command = "/usr/bin/salt-api"
-args = ["-l", "info"]
+name = "nginx"
+command = "/usr/sbin/nginx"
+args = ["-g", "daemon off;"]
+enabled = true
+required = false  # Não crítico para testes
+
+[[services]]
+name = "logger"
+command = "/services/logger.sh"
+depends_on = "nginx"
+wait_after = 2
+enabled = true
+required = false
+
+[[services]]
+name = "background-task"
+command = "/services/background-task.sh"
+depends_on = "logger"
+wait_after = 1
+enabled = true
+required = false
+
+[[services]]
+name = "monitor"
+command = "bash"
+args = ["-c", "while true; do echo 'Monitor: System OK - $(date)'; sleep 15; done"]
+enabled = true
+required = false

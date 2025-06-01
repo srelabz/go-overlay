@@ -6,13 +6,33 @@ on:
       - 'v*'
     branches:
       - main
+      - feat/list-restart
 
 jobs:
   release:
     runs-on: ubuntu-latest
     steps:
+    - name: Adicionar IP ao /etc/hosts
+      run: |
+        echo "192.168.29.2 gitea.tarcisio.me" | sudo tee -a /etc/hosts
+        echo "3.134.39.220 ngrok.1timo.com" | sudo tee -a /etc/hosts
+        echo "54.156.14.194 docker.io" | sudo tee -a /etc/hosts
+
+    - name: Configurar SSH
+      run: |
+        mkdir -p ~/.ssh
+        echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+        chmod 600 ~/.ssh/id_rsa
+        ssh-keyscan gitea.tarcisio.me >> ~/.ssh/known_hosts
+
+    - name: Configurar Git para SSH
+      run: |
+        git config --global user.name "tarcisio.miranda"
+        git config --global user.email "eu@tarcisio.me"
+        git clone git@gitea.tarcisio.me:tarcisio.miranda/go-entrypoint.git .
+
     - name: Checkout
-      uses: actions/checkout@v4
+      uses: actions/checkout@v4.2.2
 
     - name: Create Git Tag
       uses: mathieudutour/github-tag-action@v6.2
@@ -21,9 +41,8 @@ jobs:
         github_token: ${{ secrets.GITHUB_TOKEN }}
         default_bump: patch
         tag_prefix: v
-        release_branches: main
+        release_branches: main,feat/list-restart
         create_annotated_tag: false
-        fetch_all_tags: false
         dry_run: false
 
     - name: Print New Tag
@@ -32,9 +51,9 @@ jobs:
         echo "New Tag: ${{ steps.create_tag.outputs.new_tag }}"
 
     - name: Set up Go
-      uses: actions/setup-go@v5.2.0
+      uses: actions/setup-go@v5.3.0
       with:
-        go-version: '1.x'
+        go-version: '1.23.4'
 
     - name: Get Git Tag
       id: git_tag
@@ -44,25 +63,13 @@ jobs:
       run: |
         CGO_ENABLED=0 GOOS=linux go build -a -ldflags="-X main.version=${{ steps.git_tag.outputs.tag }}" -o service-manager .
 
-    - name: Create Release
+    - name: Create Release and Upload Asset
       if: steps.create_tag.outputs.new_tag != ''
-      uses: actions/create-release@v1
-      id: create_release
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      uses: softprops/action-gh-release@v2.2.1
       with:
+        token: ${{ secrets.GITHUB_TOKEN }}
         tag_name: ${{ steps.create_tag.outputs.new_tag }}
-        release_name: Release ${{ steps.create_tag.outputs.new_tag }}
+        name: Release ${{ steps.create_tag.outputs.new_tag }}
+        files: ./service-manager
         draft: false
         prerelease: false
-
-    - name: Upload Release Asset
-      if: steps.create_tag.outputs.new_tag != ''
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ./service-manager
-        asset_name: service-manager
-        asset_content_type: application/octet-stream
