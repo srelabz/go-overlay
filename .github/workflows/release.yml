@@ -6,70 +6,57 @@ on:
       - 'v*'
     branches:
       - main
-      - feat/list-restart
+  workflow_dispatch: {}
 
 jobs:
   release:
     runs-on: ubuntu-latest
+
     steps:
-    - name: Adicionar IP ao /etc/hosts
+    - uses: actions/checkout@v4
+
+    - name: Check if this push is a tag or branch
+      id: ctx
       run: |
-        echo "192.168.29.2 gitea.tarcisio.me" | sudo tee -a /etc/hosts
-        echo "3.134.39.220 ngrok.1timo.com" | sudo tee -a /etc/hosts
-        echo "54.156.14.194 docker.io" | sudo tee -a /etc/hosts
+        if [[ "${{ github.ref_type }}" == "tag" ]]; then
+          echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          echo "bump=false"                   >> "$GITHUB_OUTPUT"
+        else
+          echo "bump=true"                    >> "$GITHUB_OUTPUT"
+        fi
 
-    - name: Configurar SSH
-      run: |
-        mkdir -p ~/.ssh
-        echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
-        chmod 600 ~/.ssh/id_rsa
-        ssh-keyscan gitea.tarcisio.me >> ~/.ssh/known_hosts
-
-    - name: Configurar Git para SSH
-      run: |
-        git config --global user.name "tarcisio.miranda"
-        git config --global user.email "eu@tarcisio.me"
-        git clone git@gitea.tarcisio.me:tarcisio.miranda/go-entrypoint.git .
-
-    - name: Checkout
-      uses: actions/checkout@v4.2.2
-
-    - name: Create Git Tag
+    - name: Create / Bump Tag
+      if: steps.ctx.outputs.bump == 'true'
+      id: tagger
       uses: mathieudutour/github-tag-action@v6.2
-      id: create_tag
       with:
         github_token: ${{ secrets.GITHUB_TOKEN }}
-        default_bump: patch
         tag_prefix: v
-        release_branches: main,feat/list-restart
+        default_bump: patch
+        release_branches: main
         create_annotated_tag: false
-        dry_run: false
 
-    - name: Print New Tag
-      if: steps.create_tag.outputs.new_tag != ''
+    - name: Choose the final tag
+      id: tag
       run: |
-        echo "New Tag: ${{ steps.create_tag.outputs.new_tag }}"
+        final_tag="${{ steps.ctx.outputs.tag || steps.tagger.outputs.new_tag }}"
+        echo "tag=$final_tag" >> "$GITHUB_OUTPUT"
+        [[ -z "$final_tag" ]] && { echo "No tag created or found"; exit 1; }
 
     - name: Set up Go
-      uses: actions/setup-go@v5.3.0
-      with:
-        go-version: '1.23.4'
-
-    - name: Get Git Tag
-      id: git_tag
-      run: echo "::set-output name=tag::$(git describe --tags --always)"
+      uses: actions/setup-go@v5
+      with: { go-version: '1.23.4' }
 
     - name: Build binary
       run: |
-        CGO_ENABLED=0 GOOS=linux go build -a -ldflags="-X main.version=${{ steps.git_tag.outputs.tag }}" -o service-manager .
+        CGO_ENABLED=0 GOOS=linux \
+        go build -a -ldflags="-X main.version=${{ steps.tag.outputs.tag }}" \
+        -o service-manager .
 
-    - name: Create Release and Upload Asset
-      if: steps.create_tag.outputs.new_tag != ''
-      uses: softprops/action-gh-release@v2.2.1
+    - name: Create GitHub Release and attach binary
+      uses: softprops/action-gh-release@v2
       with:
-        token: ${{ secrets.GITHUB_TOKEN }}
-        tag_name: ${{ steps.create_tag.outputs.new_tag }}
-        name: Release ${{ steps.create_tag.outputs.new_tag }}
-        files: ./service-manager
-        draft: false
-        prerelease: false
+        token:    ${{ secrets.GITHUB_TOKEN }}
+        tag_name: ${{ steps.tag.outputs.tag }}
+        name:     Release ${{ steps.tag.outputs.tag }}
+        files:    ./service-manager
