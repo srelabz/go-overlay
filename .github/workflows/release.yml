@@ -15,18 +15,18 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Check if this push is a tag or branch
+    - name: detect
       id: ctx
       run: |
         if [[ "${{ github.ref_type }}" == "tag" ]]; then
-          echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
-          echo "bump=false"                   >> "$GITHUB_OUTPUT"
+          echo "is_branch=false" >>$GITHUB_OUTPUT
+          echo "tag=${GITHUB_REF#refs/tags/}" >>$GITHUB_OUTPUT
         else
-          echo "bump=true"                    >> "$GITHUB_OUTPUT"
+          echo "is_branch=true" >>$GITHUB_OUTPUT
         fi
 
-    - name: Create / Bump Tag
-      if: steps.ctx.outputs.bump == 'true'
+    - name: bump_tag
+      if: steps.ctx.outputs.is_branch == 'true'
       id: tagger
       uses: mathieudutour/github-tag-action@v6.2
       with:
@@ -36,27 +36,32 @@ jobs:
         release_branches: main
         create_annotated_tag: false
 
-    - name: Choose the final tag
+    - name: set_tag
       id: tag
       run: |
-        final_tag="${{ steps.ctx.outputs.tag || steps.tagger.outputs.new_tag }}"
-        echo "tag=$final_tag" >> "$GITHUB_OUTPUT"
-        [[ -z "$final_tag" ]] && { echo "No tag created or found"; exit 1; }
+        if [[ "${{ steps.ctx.outputs.is_branch }}" == 'true' ]]; then
+          echo "tag=${{ steps.tagger.outputs.new_tag }}" >>$GITHUB_OUTPUT
+        else
+          echo "tag=${{ steps.ctx.outputs.tag }}" >>$GITHUB_OUTPUT
+        fi
 
-    - name: Set up Go
-      uses: actions/setup-go@v5
-      with: { go-version: '1.23.4' }
+    - uses: actions/setup-go@v5
+      if: github.ref_type == 'tag'
+      with:
+        go-version: '1.23.4'
 
-    - name: Build binary
+    - name: build
+      if: github.ref_type == 'tag'
       run: |
         CGO_ENABLED=0 GOOS=linux \
         go build -a -ldflags="-X main.version=${{ steps.tag.outputs.tag }}" \
         -o service-manager .
 
-    - name: Create GitHub Release and attach binary
+    - name: release
+      if: github.ref_type == 'tag'
       uses: softprops/action-gh-release@v2
       with:
-        token:    ${{ secrets.GITHUB_TOKEN }}
+        token: ${{ secrets.GITHUB_TOKEN }}
         tag_name: ${{ steps.tag.outputs.tag }}
-        name:     Release ${{ steps.tag.outputs.tag }}
-        files:    ./service-manager
+        name: Release ${{ steps.tag.outputs.tag }}
+        files: ./service-manager
