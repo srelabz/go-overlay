@@ -14,19 +14,32 @@ ref    = os.getenv("GITHUB_REF", "")
 tok    = os.getenv("GITHUB_TOKEN", "")
 tag    = ""
 
+print(f"DEBUG: Server: {server}")
+print(f"DEBUG: Repo: {repo}")
+print(f"DEBUG: Ref type: {ref_tp}")
+print(f"DEBUG: Ref: {ref}")
+
 if ref_tp == "branch":
+    print("Branch push detected, creating new tag...")
     sh("git fetch --prune --tags")
     last = sh("git tag --sort=-v:refname | head -n1", output=True) or "v0.0.0"
+    print(f"Last tag: {last}")
     a, b, c = map(int, last.lstrip("v").split("."))
     tag = f"v{a}.{b}.{c+1}"
+    print(f"Creating new tag: {tag}")
     sh(f"git tag {tag}")
     if server == "https://github.com":
         sh(f"git push https://x-access-token:{tok}@github.com/{repo}.git {tag}")
     else:
         sh("git push origin " + tag)
+    print(f"Tag {tag} pushed, exiting to let tag trigger handle the release")
     sys.exit(0)
-else:
+elif ref_tp == "tag":
     tag = ref.rsplit("/", 1)[-1]
+    print(f"Tag push detected: {tag}")
+else:
+    print(f"Unknown ref type: {ref_tp}")
+    sys.exit(1)
 
 print(f"Building binary for tag: {tag}")
 sh(f'CGO_ENABLED=0 GOOS=linux go build -a -ldflags="-X main.version={tag}" -o service-manager .')
@@ -42,6 +55,7 @@ if server != "https://github.com":
     print("Gitea detected; skipping release upload")
     sys.exit(0)
 
+print("Creating GitHub release...")
 api = f"https://api.github.com/repos/{repo}/releases"
 headers = {"Authorization": f"Bearer {tok}", "Accept": "application/vnd.github+json"}
 data = {"tag_name": tag, "name": f"Release {tag}", "draft": False, "prerelease": False}
@@ -71,7 +85,7 @@ with open("service-manager", "rb") as f:
     upload_headers = headers.copy()
     upload_headers["Content-Type"] = "application/octet-stream"
     upload_response = requests.post(upload_url, headers=upload_headers, data=f.read())
-
+    
     if upload_response.status_code == 201:
         print("✓ Binary uploaded successfully!")
         asset_info = upload_response.json()
@@ -81,4 +95,4 @@ with open("service-manager", "rb") as f:
         print(f"Response: {upload_response.text}")
         sys.exit(1)
 
-print("Release created:", tag)
+print("Release created successfully:", tag)
