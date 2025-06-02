@@ -5,83 +5,26 @@ permissions:
 
 on:
   push:
-    tags:
-      - 'v*'
-    branches:
-      - main
+    tags: ['v*']
+    branches: ['main']
   workflow_dispatch: {}
 
 jobs:
   release:
     runs-on: ubuntu-latest
-
     steps:
-    - uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
-        persist-credentials: true
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
 
-    - name: detect
-      id: ctx
-      run: |
-        if [[ "${{ github.ref_type }}" == "tag" ]]; then
-          echo "is_branch=false" >>$GITHUB_OUTPUT
-          echo "tag=${GITHUB_REF#refs/tags/}" >>$GITHUB_OUTPUT
-        else
-          echo "is_branch=true" >>$GITHUB_OUTPUT
-        fi
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.23.4' }
 
-    - name: auth_github_push
-      if: steps.ctx.outputs.is_branch == 'true' && github.server_url == 'https://github.com'
-      run: |
-        git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
 
-    - name: auth_gitea_push
-      if: steps.ctx.outputs.is_branch == 'true' && github.server_url != 'https://github.com'
-      env:
-        GIT_SSH_COMMAND: 'ssh -o StrictHostKeyChecking=no'
-      run: |
-        git remote set-url origin git@gitea.tarcisio.me:tarcisio.miranda/$(basename -s .git ${{ github.repository }}).git
+      - run: pip install requests
 
-    - name: bump_tag
-      if: steps.ctx.outputs.is_branch == 'true'
-      id: tagger
-      run: |
-        git fetch --prune --tags
-        last=$(git tag --sort=-v:refname | head -n1)
-        [[ -z "$last" ]] && last="v0.0.0"
-        v=${last#v}; IFS='.' read -r a b c <<<"$v"
-        next="v$a.$b.$((c+1))"
-        git tag "$next"
-        git push origin "$next"
-        echo "new_tag=$next" >>$GITHUB_OUTPUT
-
-    - name: set_tag
-      id: tag
-      run: |
-        if [[ "${{ steps.ctx.outputs.is_branch }}" == 'true' ]]; then
-          echo "tag=${{ steps.tagger.outputs.new_tag }}" >>$GITHUB_OUTPUT
-        else
-          echo "tag=${{ steps.ctx.outputs.tag }}" >>$GITHUB_OUTPUT
-        fi
-
-    - uses: actions/setup-go@v5
-      if: github.ref_type == 'tag'
-      with:
-        go-version: '1.23.4'
-
-    - name: build
-      if: github.ref_type == 'tag'
-      run: |
-        CGO_ENABLED=0 GOOS=linux \
-        go build -a -ldflags="-X main.version=${{ steps.tag.outputs.tag }}" \
-        -o service-manager .
-
-    - name: release_github
-      if: github.ref_type == 'tag' && github.server_url == 'https://github.com'
-      uses: softprops/action-gh-release@v2
-      with:
-        token: ${{ secrets.GITHUB_TOKEN }}
-        tag_name: ${{ steps.tag.outputs.tag }}
-        name: Release ${{ steps.tag.outputs.tag }}
-        files: ./service-manager
+      - run: python .github/scripts/release.py
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GIT_SSH_COMMAND: 'ssh -o StrictHostKeyChecking=no'
