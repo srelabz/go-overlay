@@ -76,16 +76,23 @@ if r.status_code not in [200, 201]:
 
 release_data = r.json()
 release_id = release_data["id"]
+upload_url_template = release_data["upload_url"]
 print(f"Release ID: {release_id}")
+print(f"Upload URL template: {upload_url_template}")
 
-upload_url = f"{api}/{release_id}/assets?name=service-manager"
-print(f"Uploading binary to: {upload_url}")
+upload_url = upload_url_template.replace("{?name,label}", f"?name=service-manager")
+print(f"Final upload URL: {upload_url}")
 
 with open("service-manager", "rb") as f:
-    upload_headers = headers.copy()
-    upload_headers["Content-Type"] = "application/octet-stream"
+    upload_headers = {
+        "Authorization": f"Bearer {tok}",
+        "Content-Type": "application/octet-stream",
+        "Accept": "application/vnd.github+json"
+    }
+
+    print(f"Uploading binary ({file_size} bytes)...")
     upload_response = requests.post(upload_url, headers=upload_headers, data=f.read())
-    
+
     if upload_response.status_code == 201:
         print("✓ Binary uploaded successfully!")
         asset_info = upload_response.json()
