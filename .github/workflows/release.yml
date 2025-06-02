@@ -1,5 +1,8 @@
 name: Build & Release
 
+permissions:
+  contents: write
+
 on:
   push:
     tags:
@@ -14,6 +17,9 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        persist-credentials: true
 
     - name: detect
       id: ctx
@@ -25,6 +31,18 @@ jobs:
           echo "is_branch=true" >>$GITHUB_OUTPUT
         fi
 
+    - name: auth_github_push
+      if: steps.ctx.outputs.is_branch == 'true' && github.server_url == 'https://github.com'
+      run: |
+        git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
+
+    - name: auth_gitea_push
+      if: steps.ctx.outputs.is_branch == 'true' && github.server_url != 'https://github.com'
+      env:
+        GIT_SSH_COMMAND: 'ssh -o StrictHostKeyChecking=no'
+      run: |
+        git remote set-url origin git@gitea.tarcisio.me:tarcisio.miranda/$(basename -s .git ${{ github.repository }}).git
+
     - name: bump_tag
       if: steps.ctx.outputs.is_branch == 'true'
       id: tagger
@@ -32,9 +50,8 @@ jobs:
         git fetch --prune --tags
         last=$(git tag --sort=-v:refname | head -n1)
         [[ -z "$last" ]] && last="v0.0.0"
-        ver=${last#v}
-        IFS='.' read -r maj min pat <<<"$ver"
-        next="v$maj.$min.$((pat+1))"
+        v=${last#v}; IFS='.' read -r a b c <<<"$v"
+        next="v$a.$b.$((c+1))"
         git tag "$next"
         git push origin "$next"
         echo "new_tag=$next" >>$GITHUB_OUTPUT
@@ -60,8 +77,8 @@ jobs:
         go build -a -ldflags="-X main.version=${{ steps.tag.outputs.tag }}" \
         -o service-manager .
 
-    - name: release
-      if: github.ref_type == 'tag'
+    - name: release_github
+      if: github.ref_type == 'tag' && github.server_url == 'https://github.com'
       uses: softprops/action-gh-release@v2
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
