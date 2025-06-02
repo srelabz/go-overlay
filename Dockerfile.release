@@ -1,0 +1,23 @@
+FROM alpine:latest
+
+ARG VERSION=latest
+
+RUN apk --no-cache add ca-certificates tzdata bash curl procps
+
+WORKDIR /
+
+ADD https://github.com/tarcisiomiranda/go-entrypoint/releases/${VERSION}/download/service-manager /go-supervisor
+
+RUN chmod +x /go-supervisor
+
+COPY services.toml /services.toml
+
+RUN echo '#!/bin/bash\necho "Logger service started"\nwhile true; do\n  echo "$(date): Log entry from logger service"\n  sleep 5\ndone' > /scripts/logger.sh && \
+    chmod +x /scripts/logger.sh
+
+RUN echo '#!/bin/bash\necho "Background task started"\nwhile true; do\n  echo "$(date): Background task running..."\n  sleep 10\ndone' > /scripts/background-task.sh && \
+    chmod +x /scripts/background-task.sh
+
+RUN mkdir -p /scripts
+
+ENTRYPOINT ["/go-supervisor"]

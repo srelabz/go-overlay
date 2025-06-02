@@ -1,25 +1,23 @@
-FROM ubuntu:22.04
+FROM golang:1.23.4-alpine AS builder
 
-RUN apt-get update && apt-get install -y \
-    nginx \
-    curl \
-    procps \
-    && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY go.mod go.sum ./
+RUN go mod download
 
-RUN mkdir -p /var/log/nginx /services
+COPY main.go ./
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o go-supervisor main.go
 
-COPY service-manager /usr/local/bin/tm-orchestrator
+FROM alpine:latest
+
+RUN apk --no-cache add ca-certificates tzdata bash curl procps
+
+WORKDIR /
+
+COPY --from=builder /app/go-supervisor /go-supervisor
+
+RUN chmod +x /go-supervisor
+
 COPY services.toml /services.toml
 
-RUN chmod +x /usr/local/bin/tm-orchestrator && \
-    ln -sf /usr/local/bin/tm-orchestrator /usr/local/bin/entrypoint
+ENTRYPOINT ["/go-supervisor"]
 
-RUN echo '#!/bin/bash\necho "Logger service started"\nwhile true; do\n  echo "$(date): Log entry from logger service"\n  sleep 5\ndone' > /services/logger.sh && \
-    chmod +x /services/logger.sh
-
-RUN echo '#!/bin/bash\necho "Background task started"\nwhile true; do\n  echo "$(date): Background task running..."\n  sleep 10\ndone' > /services/background-task.sh && \
-    chmod +x /services/background-task.sh
-
-EXPOSE 80
-
-ENTRYPOINT ["tm-orchestrator"]

@@ -26,7 +26,7 @@ var debugMode bool
 var version = "v0.1.0"
 
 // Socket path for inter-process communication
-const socketPath = "/tmp/tm-orchestrator.sock"
+const socketPath = "/tmp/go-supervisor.sock"
 
 // Service states enum
 type ServiceState int
@@ -223,7 +223,7 @@ func autoInstallInPath() {
 	}
 
 	// Target installation path
-	targetPath := "/usr/local/bin/tm-orchestrator"
+	targetPath := "/usr/local/bin/go-supervisor"
 	
 	// Check if symlink already exists and points to our executable
 	if linkTarget, err := os.Readlink(targetPath); err == nil {
@@ -241,16 +241,16 @@ func autoInstallInPath() {
 		return
 	}
 
-	_info("Auto-installed in PATH as 'tm-orchestrator'")
-	_info("You can now use: tm-orchestrator list, tm-orchestrator restart <service>, etc.")
+	_info("Auto-installed in PATH as 'go-supervisor'")
+	_info("You can now use: go-supervisor list, go-supervisor restart <service>, etc.")
 }
 
 func main() {
-	fmt.Printf("TM Orchestrator - Version: %s\n", version)
+	fmt.Printf("Go Supervisor - Version: %s\n", version)
 
 	var rootCmd = &cobra.Command{
-		Use:   "entrypoint",
-		Short: "Custom Docker entrypoint in Go",
+		Use:   "go-supervisor",
+		Short: "Go-based service supervisor like s6-overlay",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if debugMode {
 				_printEnvVariables()
@@ -305,7 +305,7 @@ func main() {
 	// Install command - manual installation
 	var installCmd = &cobra.Command{
 		Use:   "install",
-		Short: "Install tm-orchestrator in system PATH",
+		Short: "Install go-supervisor in system PATH",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			autoInstallInPath()
 			return nil
@@ -1312,7 +1312,7 @@ func handleGetStatus() IPCResponse {
 func sendIPCCommand(cmd IPCCommand) (*IPCResponse, error) {
 	conn, err := net.Dial("unix", socketPath)
 	if err != nil {
-		return nil, fmt.Errorf("could not connect to TM Orchestrator daemon: %v", err)
+		return nil, fmt.Errorf("could not connect to Go Supervisor daemon: %v", err)
 	}
 	defer conn.Close()
 
