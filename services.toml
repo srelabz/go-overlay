@@ -1,37 +1,89 @@
-# TM Orchestrator Configuration
-# Timeouts configuráveis (em segundos)
 [timeouts]
-post_script_timeout = 5      # Tempo para executar post-scripts
-service_shutdown_timeout = 15 # Tempo para shutdown graceful de cada serviço
-global_shutdown_timeout = 45  # Tempo total para shutdown do sistema
-dependency_wait_timeout = 120 # Tempo máximo para aguardar dependências
+# Time to wait after a service starts before running its `pos_script` (seconds)
+post_script_timeout = 7
+# Max time for a service to shut down gracefully before being killed (seconds)
+service_shutdown_timeout = 10
+# Max time for the entire shutdown sequence to complete (seconds)
+global_shutdown_timeout = 30
+# Max time to wait for a dependency to start (seconds)
+dependency_wait_timeout = 300
 
 [[services]]
 name = "nginx"
 command = "/usr/sbin/nginx"
-args = ["-g", "daemon off;"]
+pre_script = "/scripts/pma-auth.sh"
+args = ["-g", "'daemon off;'"]
+# Optional: run as specific user
+# user = "www-data"
+# Optional: redirect logs to a file instead of PTY
+# log_file = "/var/log/nginx/access.log"
+# Start only if true (defaults to true when omitted)
 enabled = true
-required = false  # Não crítico para testes
+# If true, failure triggers global shutdown
+required = true
+# Service dependency coordination
+depends_on = "php-fpm"
+wait_after = 3
 
 [[services]]
-name = "logger"
-command = "/services/logger.sh"
-depends_on = "nginx"
-wait_after = 2
+name = "node-app"
+command = "/usr/bin/npm"
+args = ["--prefix", "/srv/nodejs", "run", "dev"]
+# user = "node"
+# log_file = "/var/log/node-app.log"
 enabled = true
 required = false
+# depends_on = ""
+# wait_after = 0
+# pre_script = "/scripts/node-pre.sh"
+# pos_script = "/scripts/node-pos.sh"
 
 [[services]]
-name = "background-task"
-command = "/services/background-task.sh"
-depends_on = "logger"
-wait_after = 1
+name = "php-fpm"
+command = "/usr/local/sbin/php-fpm"
+pre_script = "/scripts/php-fpm.sh"
+# user = "www-data"
+# log_file = "/var/log/php-fpm.log"
 enabled = true
-required = false
+required = true
+# depends_on = ""
+# wait_after = 0
+# pos_script = "/scripts/php-fpm-pos.sh"
 
 [[services]]
-name = "monitor"
-command = "bash"
-args = ["-c", "while true; do echo 'Monitor: System OK - $(date)'; sleep 15; done"]
+name = "mariadb"
+command = "/usr/bin/mysqld"
+pre_script = "/scripts/mariadb.sh"
+pos_script = "/scripts/is_empty.py"
+args = [
+  "--user=mysql",
+  "--console",
+  "--skip-name-resolve",
+  "--skip-networking=0"
+]
+# user = "mysql"
+# log_file = "/var/log/mysql/mysqld.log"
 enabled = true
 required = false
+# depends_on = ""
+# wait_after = 0
+
+[[services]]
+name    = "fastapi"
+command = "uvicorn"
+args = [
+  "main:app",
+  "--app-dir=/srv/python",
+  "--host=0.0.0.0",
+  "--port=8012",
+  "--reload",
+  "--log-level=debug"
+]
+# user = "www-data"
+# log_file = "/var/log/fastapi.log"
+enabled = true
+required = false
+# depends_on = "mariadb"
+# wait_after = 2
+# pre_script = "/scripts/fastapi-pre.sh"
+# pos_script = "/scripts/fastapi-pos.sh"

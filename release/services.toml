@@ -1,0 +1,40 @@
+[[services]]
+name = "nginx"
+command = "/usr/sbin/nginx"
+pre_script = "/scripts/pma-auth.sh"
+args = ["-g", "'daemon off;'"]
+
+[[services]]
+name = "node-app"
+command = "/usr/bin/npm"
+args = ["--prefix", "/srv/nodejs", "run", "dev"]
+
+[[services]]
+name = "php-fpm"
+user = "www-data"
+command = "/usr/local/sbin/php-fpm"
+pre_script = "/scripts/php-fpm.sh"
+
+[[services]]
+name = "mariadb"
+command = "/usr/bin/mysqld"
+pre_script = "/scripts/mariadb.sh"
+pos_script = "/scripts/is_empty.py"
+args = [
+  "--user=mysql",
+  "--console",
+  "--skip-name-resolve",
+  "--skip-networking=0"
+]
+
+[[services]]
+name    = "fastapi"
+command = "uvicorn"
+args = [
+  "main:app",
+  "--app-dir=/srv/python",
+  "--host=0.0.0.0",
+  "--port=8012",
+  "--reload",
+  "--log-level=debug"
+]

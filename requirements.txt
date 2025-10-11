@@ -1,0 +1,5 @@
+invoke
+minio
+pre-commit
+PyYAML
+python-dotenv

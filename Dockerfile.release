@@ -6,9 +6,9 @@ RUN apk --no-cache add ca-certificates tzdata bash curl procps
 
 WORKDIR /
 
-ADD https://github.com/tarcisiomiranda/go-entrypoint/releases/${VERSION}/download/service-manager /go-supervisor
+ADD https://github.com/srelabz/go-overlay/releases/${VERSION}/download/service-manager /go-overlay
 
-RUN chmod +x /go-supervisor
+RUN chmod +x /go-overlay
 
 COPY services.toml /services.toml
 
@@ -20,4 +20,4 @@ RUN echo '#!/bin/bash\necho "Background task started"\nwhile true; do\n  echo "$
 
 RUN mkdir -p /scripts
 
-ENTRYPOINT ["/go-supervisor"]
+ENTRYPOINT ["/go-overlay"]

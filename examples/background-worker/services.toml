@@ -1,0 +1,15 @@
+# A critical web service that must always be running.
+[[services]]
+name = "web-server"
+command = "python3"
+args = ["-m", "http.server", "8080"]
+enabled = true
+required = true # If this fails, the container will shut down.
+
+# A background worker that is allowed to fail without stopping the container.
+[[services]]
+name = "worker"
+command = "sh"
+args = ["-c", "echo 'Worker starting...'; sleep 5; echo 'Worker has an error!'; exit 1"]
+enabled = true
+required = false # If this fails, other services keep running.

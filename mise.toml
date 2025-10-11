@@ -1,0 +1,6 @@
+[tools]
+go = "1.23"
+python = "3.12"
+
+[settings]
+python_venv_auto_create = true

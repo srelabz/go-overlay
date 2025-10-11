@@ -26,7 +26,7 @@ var debugMode bool
 var version = "v0.1.0"
 
 // Socket path for inter-process communication
-const socketPath = "/tmp/go-supervisor.sock"
+const socketPath = "/tmp/go-overlay.sock"
 
 // Service states enum
 type ServiceState int
@@ -223,7 +223,7 @@ func autoInstallInPath() {
 	}
 
 	// Target installation path
-	targetPath := "/usr/local/bin/go-supervisor"
+	targetPath := "/usr/local/bin/go-overlay"
 	
 	// Check if symlink already exists and points to our executable
 	if linkTarget, err := os.Readlink(targetPath); err == nil {
@@ -241,15 +241,15 @@ func autoInstallInPath() {
 		return
 	}
 
-	_info("Auto-installed in PATH as 'go-supervisor'")
-	_info("You can now use: go-supervisor list, go-supervisor restart <service>, etc.")
+	_info("Auto-installed in PATH as 'go-overlay'")
+	_info("You can now use: go-overlay list, go-overlay restart <service>, etc.")
 }
 
 func main() {
-	fmt.Printf("Go Supervisor - Version: %s\n", version)
+	fmt.Printf("Go Overlay - Version: %s\n", version)
 
 	var rootCmd = &cobra.Command{
-		Use:   "go-supervisor",
+		Use:   "go-overlay",
 		Short: "Go-based service supervisor like s6-overlay",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if debugMode {
@@ -305,7 +305,7 @@ func main() {
 	// Install command - manual installation
 	var installCmd = &cobra.Command{
 		Use:   "install",
-		Short: "Install go-supervisor in system PATH",
+		Short: "Install go-overlay in system PATH",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			autoInstallInPath()
 			return nil
@@ -466,8 +466,12 @@ func loadServices(configFile string) error {
 	globalConfig = &config
 
 	_info("Configuration validated successfully")
-	_info("Timeouts configured: PostScript=%ds, ServiceShutdown=%ds, GlobalShutdown=%ds", 
-		config.Timeouts.PostScript, config.Timeouts.ServiceShutdown, config.Timeouts.GlobalShutdown)
+    _info(fmt.Sprintf(
+        "Timeouts configured: PostScript=%ds, ServiceShutdown=%ds, GlobalShutdown=%ds",
+        config.Timeouts.PostScript,
+        config.Timeouts.ServiceShutdown,
+        config.Timeouts.GlobalShutdown,
+    ))
 
 	startedServices := make(map[string]bool)
 	var mu sync.Mutex
@@ -1312,7 +1316,7 @@ func handleGetStatus() IPCResponse {
 func sendIPCCommand(cmd IPCCommand) (*IPCResponse, error) {
 	conn, err := net.Dial("unix", socketPath)
 	if err != nil {
-		return nil, fmt.Errorf("could not connect to Go Supervisor daemon: %v", err)
+		return nil, fmt.Errorf("could not connect to Go Overlay daemon: %v", err)
 	}
 	defer conn.Close()
 

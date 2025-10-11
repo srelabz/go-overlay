@@ -1,4 +1,4 @@
-# Go Supervisor
+# Go Overlay
 
 Go-based service orchestrator inspired by s6-overlay for running multiple services in containers. Provides graceful shutdown, dependency management, and CLI control.
 
@@ -19,82 +19,111 @@ Go-based service orchestrator inspired by s6-overlay for running multiple servic
 ### Download and Install
 ```bash
 # Download latest release
-curl -L https://github.com/tarcisiomiranda/go-entrypoint/releases/latest/download/service-manager -o go-supervisor
-chmod +x go-supervisor
+curl -L https://github.com/srelabz/go-overlay/releases/latest/download/service-manager -o go-overlay
+chmod +x go-overlay
 
-# Auto-install in PATH (creates symlink at /go-supervisor)
-sudo ./go-supervisor install
+# Auto-install in PATH (creates symlink at /go-overlay)
+sudo ./go-overlay install
 
 # Now you can use from anywhere:
-go-supervisor list
-go-supervisor status
-go-supervisor restart nginx
+go-overlay list
+go-overlay status
+go-overlay restart nginx
 ```
 
 ### Docker Usage
 ```dockerfile
 FROM alpine:latest
 
-# Download go-supervisor directly from GitHub releases
-ADD https://github.com/tarcisiomiranda/go-entrypoint/releases/latest/download/service-manager /go-supervisor
-RUN chmod +x /go-supervisor
+# Download go-overlay directly from GitHub releases
+ADD https://github.com/srelabz/go-overlay/releases/latest/download/service-manager /go-overlay
+RUN chmod +x /go-overlay
 
 # Copy your service configuration
 COPY services.toml /services.toml
 
 # Set as entrypoint
-ENTRYPOINT ["/go-supervisor"]
+ENTRYPOINT ["/go-overlay"]
 ```
 
 ## CLI Commands
 
 ```bash
-go-supervisor                    # Start daemon
-go-supervisor list               # List services
-go-supervisor status             # Show status
-go-supervisor restart <service>  # Restart service
-go-supervisor install            # Manual installation
+go-overlay                    # Start daemon
+go-overlay list               # List services
+go-overlay status             # Show status
+go-overlay restart <service>  # Restart service
+go-overlay install            # Manual installation
 ```
 
-## Configuration
+## Configuration (`services.toml`)
+
+`go-overlay` uses a `services.toml` file to define the services it should manage.
+
+### Global Timeouts
+
+You can specify global timeouts in a `[timeouts]` block. These are the defaults implemented in the code:
 
 ```toml
 [timeouts]
-post_script_timeout = 5
-service_shutdown_timeout = 15
-global_shutdown_timeout = 45
-dependency_wait_timeout = 120
+# Time to wait after a service starts before running its `pos_script`.
+post_script_timeout = 7
 
+# Max time for a service to shut down gracefully before being killed.
+service_shutdown_timeout = 10
+
+# Max time for the entire shutdown sequence to complete.
+global_shutdown_timeout = 30
+
+# Max time to wait for a dependency to start.
+dependency_wait_timeout = 300
+```
+
+### Service Definition
+
+Each service is defined in a `[[services]]` block. Supported fields below reflect the current implementation:
+
+```toml
 [[services]]
-name = "nginx"
-command = "/usr/sbin/nginx"
-args = ["-g", "daemon off;"]
+# A unique name for the service. Used for logging and CLI commands. (Required)
+name = "my-app"
+
+# The command to execute. (Required)
+command = "/usr/local/bin/my-app-binary"
+
+# A list of arguments to pass to the command. (Optional)
+args = ["--config", "/etc/my-app.conf", "--verbose"]
+
+# If provided, go-overlay will tail this file instead of attaching a PTY. (Optional)
+# log_file = "/var/log/my-app.log"
+
+# A shell script to execute before starting the main command. (Optional)
+pre_script = "/scripts/setup-app.sh"
+
+# A shell script to execute after the service is considered started (runs after post_script_timeout). (Optional)
+pos_script = "/scripts/notify-startup.sh"
+
+# Name of a dependency that must be started before this service. (Optional)
+depends_on = "database"
+
+# Extra delay (in seconds) after dependency is up, before starting this service. (Optional)
+wait_after = 5
+
+# If omitted, defaults to true. (Optional)
 enabled = true
+
+# If true, a failure of this service triggers a graceful shutdown of all services. (Optional, default: false)
 required = false
 
-[[services]]
-name = "app"
-command = "/usr/local/bin/myapp"
-depends_on = "nginx"
-wait_after = 3
-enabled = true
-required = true
-user = "appuser"
-
-[[services]]
-name = "worker"
-command = "/usr/local/bin/worker"
-pre_script = "/scripts/setup-worker.sh"
-pos_script = "/scripts/post-worker.sh"
-log_file = "/var/log/worker.log"
-enabled = true
+# Run the service as a specific user (uses `su`). (Optional)
+user = "www-data"
 ```
 
 ## Auto-Installation
 
-When running in daemon mode, Go Supervisor automatically:
+When running in daemon mode, Go Overlay automatically:
 1. Detects if it's already in a PATH directory
-2. Creates a symlink at `/go-supervisor`
+2. Creates a symlink at `/go-overlay`
 3. Enables CLI commands from any location
 
 ## Service States
@@ -112,82 +141,35 @@ When running in daemon mode, Go Supervisor automatically:
 - **[CLI Commands Reference](docs/CLI-COMMANDS.md)** - Complete CLI command documentation
 - **[Graceful Shutdown Testing](docs/TEST-GRACEFUL-SHUTDOWN.md)** - Testing shutdown behavior
 
-## Roadmap
-
-### ✅ Implemented Features
-
-- **Graceful Shutdown** - Complete signal handling with configurable timeouts
-- **Service State Management** - Real-time state tracking and reporting
-- **Configuration Validation** - Comprehensive validation with circular dependency detection
-- **CLI Commands** - Remote service management via IPC (list, restart, status)
-- **Auto-Installation** - Automatic PATH installation for seamless Docker usage
-- **Dependency Management** - Service startup ordering and waiting
-- **PTY Support** - Proper log streaming with service name prefixes
-- **User Switching** - Run services as different users
-- **Basic Health Monitoring** - Service failure detection and system shutdown
-
-### 🚧 Planned Features
-
-#### High Priority
-- [ ] **Health Checks** - HTTP/TCP health checks with configurable intervals
-- [ ] **Restart Policies** - Automatic restart on failure with backoff strategies
-
-#### Medium Priority
-- [ ] **Resource Monitoring** - CPU/Memory usage tracking per service
-- [ ] **Metrics Integration** - Prometheus metrics endpoint
-
-#### Low Priority
-- [ ] **Web UI** - Browser-based service management interface
-- [ ] **Cron Scheduling** - Time-based service execution
-
 ## Examples
 
-### Web Application Stack
+We provide a dedicated `examples/` directory with practical configurations:
 
-```toml
-[[services]]
-name = "redis"
-command = "/usr/bin/redis-server"
-enabled = true
-
-[[services]]
-name = "db-migrate"
-command = "/app/migrate"
-depends_on = "redis"
-wait_after = 2
-enabled = true
-
-[[services]]
-name = "web"
-command = "/app/server"
-args = ["--port", "8080"]
-depends_on = "db-migrate"
-wait_after = 1
-enabled = true
-required = true
-```
-
-### Docker Integration
-
-```dockerfile
-FROM ubuntu:22.04
-
-RUN apt-get update && apt-get install -y nginx curl procps
-
-COPY go-supervisor /go-supervisor
-COPY services.toml /services.toml
-
-RUN chmod +x /go-supervisor
-
-ENTRYPOINT ["go-supervisor"]
-```
+- **[Simple Web Server](./examples/simple-web-server/README.md)**: Minimal config to run a single service.
+- **[Web Stack with Dependencies](./examples/web-stack-deps/README.md)**: Control startup order using `depends_on`.
+- **[Background Worker](./examples/background-worker/README.md)**: Use `required` for critical vs. non-critical services.
+- **[Advanced Features](./examples/advanced-features/README.md)**: `pre_script`, `pos_script`, `user`, and `log_file` usage.
 
 ## Development
 
+This project uses `invoke` with `mise` for task management.
+
 ```bash
-make build
-make install
-make uninstall
+# List available tasks
+mise exec -- invoke --list
+
+# Build the Go binary for your local OS
+mise exec -- invoke go.build
+
+# Install/uninstall the binary
+mise exec -- invoke install
+mise exec -- invoke uninstall
+
+# Build the Docker image
+mise exec -- invoke docker.build
+
+# Run tests
+mise exec -- invoke go.test
 ```
 
 ## Contributing

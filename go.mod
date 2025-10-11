@@ -1,4 +1,4 @@
-module go-entrypoint
+module go-overlay
 
 go 1.23.4
 

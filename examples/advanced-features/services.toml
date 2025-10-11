@@ -1,0 +1,12 @@
+[[services]]
+name = "advanced-service"
+command = "/usr/bin/tail"
+args = ["-f", "/var/log/app.log"]
+user = "nobody"
+
+# Scripts to run before and after the main command
+pre_script = "/scripts/setup.sh"
+pos_script = "/scripts/teardown.sh"
+
+# If this is enabled, logs will go to the file instead of stdout
+# log_file = "/var/log/app.log"
