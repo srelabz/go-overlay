@@ -151,8 +151,8 @@ class GitHubReleaser:
             "Accept": "application/vnd.github+json",
         }
 
-        body = os.getenv("RELEASE_BODY", "").strip()
-        if not body and Path("releseases_notes.toml").exists():
+        body = ""
+        if Path("releseases_notes.toml").exists():
             try:
                 with open("releseases_notes.toml", "rb") as f:
                     data = tomllib.load(f)
@@ -178,6 +178,8 @@ class GitHubReleaser:
                         body = mapped_body
             except Exception as e:
                 print(f"WARNING: Could not parse releseases_notes.toml: {e}")
+        if not body:
+            body = os.getenv("RELEASE_BODY", "").strip()
         if not body:
             try:
                 body = self.run_command(

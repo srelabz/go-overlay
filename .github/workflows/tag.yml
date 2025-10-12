@@ -1,12 +1,11 @@
-name: Auto Tag on Main
+name: Auto Tag (Manual)
 
 permissions:
   contents: write
   actions: read
 
 on:
-  push:
-    branches: ['main']
+  workflow_dispatch: {}
 
 jobs:
   autotag:
