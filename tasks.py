@@ -1,17 +1,16 @@
 from invoke import task, Collection
-from botocore.client import Config
+from collections import Counter
 from dotenv import load_dotenv
 from typing import Optional
 from pathlib import Path
+from minio import Minio
+import datetime
 import shutil
-import boto3
+import json
 import sys
 import os
-import datetime
-from minio import Minio
 
 
-# Basic project settings, similar to Makefile variables
 GO_ENV = {
     "GOBUILD": "go build",
     "GOCLEAN": "go clean",
@@ -24,9 +23,11 @@ GO_ENV = {
 }
 RELEASE_FILENAME = "go-overlay-linux-amd64"
 
+
 def _run(c, cmd: str, pty: bool = True, env=None):
     """Helper to run commands."""
     return c.run(cmd, pty=pty, env=env)
+
 
 def getenv(name: str, default: Optional[str] = None, required: bool = False) -> str:
     """Helper to get environment variables, exiting if required and not found."""
@@ -36,15 +37,78 @@ def getenv(name: str, default: Optional[str] = None, required: bool = False) -> 
         sys.exit(1)
     return value or ""
 
+
+def _analyze_security_reports(reports_dir: Path) -> bool:
+    """Analyze Bandit and Gitleaks reports. Return True if passed (no critical issues)."""
+    has_critical_issues = False
+
+    bandit_json = reports_dir / "bandit.json"
+    if bandit_json.exists():
+        print("\n📊 Bandit Security Analysis:")
+        try:
+            with open(bandit_json, "r", encoding="utf-8") as f:
+                bandit_data = json.load(f)
+            results = bandit_data.get("results", [])
+            if results:
+                severities = [r.get("issue_severity", "UNDEFINED") for r in results]
+                severity_counts = Counter(severities)
+                total = len(results)
+                print(f"   🔍 Total findings: {total}")
+                for severity in ["HIGH", "MEDIUM", "LOW"]:
+                    count = severity_counts.get(severity, 0)
+                    if count > 0:
+                        emoji = (
+                            "🔴"
+                            if severity == "HIGH"
+                            else ("🟡" if severity == "MEDIUM" else "🔵")
+                        )
+                        print(f"   {emoji} {severity.capitalize()}: {count}")
+                        if severity == "HIGH":
+                            has_critical_issues = True
+            else:
+                print("   ✅ No security issues found!")
+        except Exception as e:
+            print(f"   ⚠️ Error analyzing Bandit JSON: {e}")
+
+    gitleaks_json = reports_dir / "gitleaks.json"
+    if gitleaks_json.exists():
+        print("\n🔑 Gitleaks Secret Scanning:")
+        try:
+            with open(gitleaks_json, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, list) and data:
+                print(f"   🚨 Found {len(data)} potential secrets!")
+                rule_counts = Counter(
+                    [item.get("RuleID", "unknown") for item in data]
+                )
+                for rule_id, count in rule_counts.most_common():
+                    print(f"      • {rule_id}: {count}")
+                has_critical_issues = True
+            else:
+                print("   ✅ No secrets detected!")
+        except Exception as e:
+            print(f"   ⚠️ Error analyzing Gitleaks JSON: {e}")
+
+    print("\n" + "=" * 50)
+    if has_critical_issues:
+        print("❌ SECURITY SCAN FAILED - Critical issues found!")
+        print("🔧 Review the reports in dist/security/ for details")
+    else:
+        print("✅ SECURITY SCAN PASSED - No critical issues found!")
+    print("=" * 50)
+
+    return not has_critical_issues
+
+
 # =============================================================================
 # Go Tasks
 # =============================================================================
-
 @task
 def build(c):
     """Build the binary for the local OS."""
     print(f"Building {GO_ENV['BINARY_NAME']}...")
     _run(c, f"{GO_ENV['GOBUILD']} -o {GO_ENV['BINARY_NAME']} -v .")
+
 
 @task
 def build_linux(c):
@@ -54,14 +118,16 @@ def build_linux(c):
     env.update({"CGO_ENABLED": "0", "GOOS": "linux"})
     _run(c, f"{GO_ENV['GOBUILD']} -o {GO_ENV['BINARY_UNIX']} -v .", env=env)
 
+
 @task
 def clean(c):
     """Clean build artifacts."""
     print("Cleaning...")
-    _run(c, GO_ENV['GOCLEAN'])
-    Path(GO_ENV['BINARY_NAME']).unlink(missing_ok=True)
-    Path(GO_ENV['BINARY_UNIX']).unlink(missing_ok=True)
+    _run(c, GO_ENV["GOCLEAN"])
+    Path(GO_ENV["BINARY_NAME"]).unlink(missing_ok=True)
+    Path(GO_ENV["BINARY_UNIX"]).unlink(missing_ok=True)
     print("Clean complete.")
+
 
 @task
 def test(c):
@@ -69,16 +135,17 @@ def test(c):
     print("Running tests...")
     _run(c, f"{GO_ENV['GOTEST']} -v ./...")
 
+
 @task
 def deps(c):
     """Install Go dependencies."""
     print("Installing dependencies...")
     _run(c, f"{GO_ENV['GOGET']} -v ./...")
 
+
 # =============================================================================
 # Installation Tasks
 # =============================================================================
-
 @task(pre=[build])
 def install(c):
     """Install the binary in the system."""
@@ -87,6 +154,7 @@ def install(c):
     c.run(f"sudo chmod +x /go-overlay", pty=True)
     print("✓ go-overlay installed successfully!")
     print("Run 'go-overlay --help' to see commands.")
+
 
 @task
 def uninstall(c):
@@ -97,15 +165,16 @@ def uninstall(c):
     c.run("sudo rm -rf /etc/go-overlay", pty=True, warn=True)
     print("✓ go-overlay uninstalled")
 
+
 # =============================================================================
 # Docker Tasks
 # =============================================================================
-
 @task(pre=[build_linux])
 def docker_build(c):
     """Build the Docker image using the local binary."""
     print("Building Docker image...")
     _run(c, f"docker build -t {GO_ENV['DOCKER_IMAGE']}:{GO_ENV['DOCKER_TAG']} .")
+
 
 @task
 def docker_release(c, version="latest"):
@@ -113,19 +182,27 @@ def docker_release(c, version="latest"):
     tag = f"release-{version}" if version != "latest" else "release-latest"
     print(f"Building Docker image from GitHub release ({version})...")
     build_arg = f"--build-arg VERSION={version}" if version != "latest" else ""
-    _run(c, f"docker build -f Dockerfile.release {build_arg} -t {GO_ENV['DOCKER_IMAGE']}:{tag} .")
+    _run(
+        c,
+        f"docker build -f Dockerfile.release {build_arg} -t {GO_ENV['DOCKER_IMAGE']}:{tag} .",
+    )
 
-@task(help={'daemon': "Run in daemon mode (background)", 'port': "Port to expose"})
+
+@task(help={"daemon": "Run in daemon mode (background)", "port": "Port to expose"})
 def docker_run(c, daemon=False, port=80):
     """Run the Docker container."""
     container_name = "go-overlay-test"
     # Stop if already running
     c.run(f"docker rm -f {container_name} || true", pty=True, warn=True, hide=True)
-    
+
     run_options = "-d" if daemon else "--rm"
     mode = "in background" if daemon else "in foreground"
     print(f"Running Docker container {mode}...")
-    _run(c, f"docker run {run_options} -p {port}:{port} --name {container_name} {GO_ENV['DOCKER_IMAGE']}:{GO_ENV['DOCKER_TAG']}")
+    _run(
+        c,
+        f"docker run {run_options} -p {port}:{port} --name {container_name} {GO_ENV['DOCKER_IMAGE']}:{GO_ENV['DOCKER_TAG']}",
+    )
+
 
 @task
 def docker_stop(c):
@@ -134,6 +211,7 @@ def docker_stop(c):
     print("Stopping Docker container...")
     c.run(f"docker stop {container_name} || true", pty=True, warn=True)
     c.run(f"docker rm {container_name} || true", pty=True, warn=True)
+
 
 @task
 def docker_logs(c):
@@ -146,28 +224,30 @@ def docker_logs(c):
 # =============================================================================
 # Release & Test Tasks
 # =============================================================================
-
 @task(pre=[clean, test, build_linux])
 def release(c):
     """Create a release package."""
     print("Creating release package...")
     release_dir = Path("release")
     release_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copy(GO_ENV['BINARY_UNIX'], release_dir / RELEASE_FILENAME)
+    shutil.copy(GO_ENV["BINARY_UNIX"], release_dir / RELEASE_FILENAME)
+
+    if Path("VERSION").exists():
+        shutil.copy("VERSION", release_dir / "VERSION")
+
     shutil.copy("services.toml", release_dir)
     if Path("tests/install-enhanced.sh").exists():
         shutil.copy("tests/install-enhanced.sh", release_dir)
     shutil.copy("README.md", release_dir)
     print(f"✓ Release created in ./{release_dir}/")
 
+
 @task(pre=[release])
 def upload(c):
     """Upload the release artifact to Backblaze B2."""
     print("Uploading artifact to Backblaze B2...")
 
-    # Load .env file if present
     load_dotenv(dotenv_path=os.getenv("DOTENV_PATH", ".env"))
-
     endpoint = getenv("BACKBLAZE_ENDPOINT", "s3.us-east-005.backblazeb2.com")
     access_key = getenv("BACKBLAZE_ACCESS_KEY_ID", required=True)
     secret_key = getenv("BACKBLAZE_SECRET_ACCESS_KEY", required=True)
@@ -186,36 +266,35 @@ def upload(c):
         print(f"ERROR: Invalid EXPIRATION value: {expiration_str}")
         sys.exit(1)
 
-    # Initialize MinIO client
     client = Minio(
         endpoint,
         access_key=access_key,
         secret_key=secret_key,
-        secure=True  # Backblaze uses HTTPS
+        secure=True,
     )
 
     try:
-        # Check if bucket exists
         found = client.bucket_exists(bucket_name)
         if not found:
             print(f"ERROR: Bucket '{bucket_name}' not found.")
             sys.exit(1)
 
-        # Upload the file
         result = client.fput_object(
-            bucket_name, object_name, str(file_path),
+            bucket_name,
+            object_name,
+            str(file_path),
         )
-        print(f"✅ Upload complete: {result.object_name} (version: {result.version_id}) -> bucket {bucket_name}")
+        print(
+            f"✅ Upload complete: {result.object_name} (version: {result.version_id}) -> bucket {bucket_name}"
+        )
 
-        # Generate presigned URL
         url = client.presigned_get_object(
             bucket_name,
             object_name,
             expires=datetime.timedelta(seconds=expiration_seconds),
         )
         print(f"🔗 Presigned URL (valid for {expiration_seconds // 60} min):\n{url}")
-        
-        # Friendly URL (if bucket is public)
+
         try:
             cluster_id = endpoint.split(".")[1].split("-")[-1]  # e.g., "005"
             friendly_domain = f"f{cluster_id}.backblazeb2.com"
@@ -228,13 +307,197 @@ def upload(c):
         print(f"❌ Upload or URL generation error: {e}")
         sys.exit(1)
 
+
+# =============================================================================
+# Security Scan Tasks
+# =============================================================================
+@task(
+    help={
+        "gitleaks_image": "Docker image for gitleaks (default: ghcr.io/gitleaks/gitleaks:latest)",
+        "bandit_image": "Docker image for bandit (default: ghcr.io/pycqa/bandit/bandit)",
+    }
+)
+def security_scan(
+    c,
+    gitleaks_image: str = "ghcr.io/gitleaks/gitleaks:latest",
+    bandit_image: str = "ghcr.io/pycqa/bandit/bandit",
+):
+    """Run Bandit and Gitleaks scans inside Docker and fail on critical issues."""
+    print("\n🛡️  Running security scans...")
+    cwd = os.getcwd()
+    reports_dir = Path("dist/security")
+    reports_dir.mkdir(parents=True, exist_ok=True)
+
+    print("\n🔎 Running Bandit security analysis...")
+    bandit_report = reports_dir / "bandit.json"
+    bandit_cmd = (
+        f"docker run --rm -v '{cwd}:/src' {bandit_image} "
+        f"-r -f json -o /src/{bandit_report} /src"
+    )
+    c.run(bandit_cmd, pty=True, warn=True)
+
+    if bandit_report.exists():
+        try:
+            with open(bandit_report, "r", encoding="utf-8") as f:
+                report = json.load(f)
+            highs = [
+                r
+                for r in report.get("results", [])
+                if r.get("issue_severity") == "HIGH"
+            ]
+            if highs:
+                print("🔴 High severity issues found by Bandit. Failing scan...")
+                raise SystemExit("Bandit found high severity issues.")
+        except Exception as e:
+            print(f"⚠️ Could not parse Bandit report: {e}")
+
+    print("\n🔑 Running Gitleaks secret scanning...")
+    gitleaks_json = reports_dir / "gitleaks.json"
+    gitleaks_sarif = reports_dir / "gitleaks.sarif"
+    base_cmd = "gitleaks detect --source ."
+    gl_json_cmd = f"docker run --rm -v '{cwd}:/work' -w /work {gitleaks_image} {base_cmd} --report-format json --report-path {gitleaks_json}"
+    gl_sarif_cmd = f"docker run --rm -v '{cwd}:/work' -w /work {gitleaks_image} {base_cmd} --report-format sarif --report-path {gitleaks_sarif}"
+    c.run(gl_json_cmd, pty=True, warn=True)
+    c.run(gl_sarif_cmd, pty=True, warn=True)
+
+    scan_passed = _analyze_security_reports(reports_dir)
+    if not scan_passed:
+        raise SystemExit("Security scan failed - critical issues found!")
+
+    print("✅ Security scans completed successfully.")
+
+
+@task
+def security_summary(c):
+    """Display summary of security scan results from dist/security/."""
+    reports_dir = Path("dist/security")
+    if not reports_dir.exists():
+        print("❌ No security reports found. Run 'invoke security.scan' first.")
+        return
+    _analyze_security_reports(reports_dir)
+
+
+@task
+def security_gosec(c):
+    """Run gosec static analysis on Go code and fail on findings."""
+    print("\n🛡️  Running gosec (Go SAST)...")
+    reports_dir = Path("dist/security")
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    report_path = reports_dir / "gosec.json"
+
+    c.run("go install github.com/securego/gosec/v2/cmd/gosec@latest", pty=True)
+
+    min_sev = os.getenv("GOSEC_MIN_SEVERITY", "HIGH").upper()
+    exclude_rules = os.getenv("GOSEC_EXCLUDE_RULES", "").strip()
+    exclude_dirs = os.getenv("GOSEC_EXCLUDE_DIRS", "").strip()
+
+    gosec_flags = ["-fmt=json", f"-out {report_path}"]
+    if exclude_rules:
+        gosec_flags.append(f"-exclude={exclude_rules}")
+    if exclude_dirs:
+        for d in [d.strip() for d in exclude_dirs.split(",") if d.strip()]:
+            gosec_flags.append(f"-exclude-dir={d}")
+
+    flags_str = " ".join(gosec_flags)
+
+    c.run(
+        f"export PATH=\"$(go env GOBIN):$(go env GOPATH)/bin:$PATH\"; gosec {flags_str} ./...",
+        pty=True,
+        warn=True,
+    )
+
+    try:
+        if report_path.exists():
+            with open(report_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            issues = data.get("Issues", []) if isinstance(data, dict) else []
+            if issues:
+                sev_counts = Counter(
+                    [i.get("severity", "UNKNOWN").upper() for i in issues]
+                )
+                print("\n📊 gosec findings:")
+                for k, v in sev_counts.items():
+                    print(f"   • {k}: {v}")
+
+                order = {"LOW": 1, "MEDIUM": 2, "HIGH": 3}
+                threshold = order.get(min_sev, 3)
+                max_issue_level = 0
+                for issue in issues:
+                    lvl = order.get(issue.get("severity", "UNKNOWN").upper(), 0)
+                    if lvl > max_issue_level:
+                        max_issue_level = lvl
+
+                if max_issue_level >= threshold:
+                    raise SystemExit("gosec found issues at or above threshold")
+                else:
+                    print(
+                        f"✅ gosec: no issues at or above threshold (min={min_sev})"
+                    )
+            else:
+                print("✅ gosec: no issues found")
+        else:
+            print("⚠️ gosec report not generated; treating as pass")
+    except Exception as e:
+        print(f"⚠️ Could not parse gosec report: {e}")
+        raise SystemExit("gosec scan failed")
+
+
+@task
+def security_govulncheck(c):
+    """Run govulncheck to detect known vulnerabilities in dependencies."""
+    print("\n🛡️  Running govulncheck (Go dependency vulnerabilities)...")
+    reports_dir = Path("dist/security")
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    report_path = reports_dir / "govulncheck.json"
+
+    c.run("go install golang.org/x/vuln/cmd/govulncheck@latest", pty=True)
+
+    c.run(
+        f"export PATH=\"$(go env GOBIN):$(go env GOPATH)/bin:$PATH\"; govulncheck -json ./... > {report_path}",
+        pty=True,
+        warn=True,
+    )
+
+    try:
+        if report_path.exists():
+            vulns = 0
+            with open(report_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        obj = json.loads(line)
+                        if obj.get("Type") == "vulnerability":
+                            vulns += 1
+                    except Exception:
+                        continue
+            if vulns > 0:
+                print(f"🔴 govulncheck: found {vulns} vulnerabilities")
+                raise SystemExit("govulncheck found vulnerabilities")
+            else:
+                print("✅ govulncheck: no vulnerabilities found")
+        else:
+            print("⚠️ govulncheck report not generated; treating as pass")
+    except Exception as e:
+        print(f"⚠️ Could not parse govulncheck report: {e}")
+        raise SystemExit("govulncheck scan failed")
+
+
+@task
+def security_go(c):
+    """Run both gosec and govulncheck."""
+    security_gosec(c)
+    security_govulncheck(c)
+
+
 @task
 def test_cli(c):
     """Run CLI tests using Docker."""
     print("Testing CLI commands...")
     docker_run(c, daemon=True)
-    c.run("sleep 5", pty=True) # wait for container to start
-    
+    c.run("sleep 5", pty=True)
+
     container_name = "go-overlay-test"
     print(f"\n--- Testing go-overlay commands on container {container_name} ---")
     commands = {
@@ -250,23 +513,207 @@ def test_cli(c):
             c.run("sleep 3", pty=True)
             print("--> Listing services again...")
             c.run(f"docker exec {container_name} go-overlay list", pty=True, warn=True)
-            
+
     print("\n--- CLI tests finished ---")
     docker_stop(c)
+
+
+# =============================================================================
+# CI/CD Pipeline Tasks
+# =============================================================================
+
+
+@task
+def ci_test(c):
+    """Run all tests (unit + integration)."""
+    print("\n" + "=" * 60)
+    print("🧪 STAGE 1/4: RUNNING TESTS")
+    print("=" * 60 + "\n")
+
+    print("📦 Installing dependencies...")
+    deps(c)
+
+    print("\n🔬 Running unit tests...")
+    test(c)
+
+    print("\n✅ All tests passed!")
+
+
+@task
+def ci_security(c):
+    """Run all security scans (gosec + govulncheck)."""
+    print("\n" + "=" * 60)
+    print("🔒 STAGE 2/4: SECURITY SCANNING")
+    print("=" * 60 + "\n")
+
+    print("🛡️  Running gosec (static analysis)...")
+    security_gosec(c)
+
+    print("\n🔍 Running govulncheck (vulnerabilities)...")
+    security_govulncheck(c)
+
+    print("\n✅ All security scans passed!")
+
+
+@task
+def ci_build(c):
+    """Build the binary for release."""
+    print("\n" + "=" * 60)
+    print("🔨 STAGE 3/4: BUILD")
+    print("=" * 60 + "\n")
+
+    print("🏗️  Building binary for Linux...")
+    build_linux(c)
+
+    print("\n✅ Build completed!")
+
+
+@task
+def ci_full(c):
+    """Run complete CI pipeline: test -> security -> build."""
+    print("\n" + "=" * 60)
+    print("🚀 STARTING FULL CI PIPELINE")
+    print("=" * 60 + "\n")
+
+    start_time = datetime.datetime.now()
+
+    try:
+        ci_test(c)
+        ci_security(c)
+        ci_build(c)
+
+        end_time = datetime.datetime.now()
+        duration = (end_time - start_time).total_seconds()
+
+        print("\n" + "=" * 60)
+        print(f"✅ FULL CI PIPELINE - SUCCESS!")
+        print(f"⏱️  Total time: {duration:.2f}s")
+        print("=" * 60 + "\n")
+
+    except Exception as e:
+        end_time = datetime.datetime.now()
+        duration = (end_time - start_time).total_seconds()
+
+        print("\n" + "=" * 60)
+        print(f"❌ CI PIPELINE FAILED!")
+        print(f"⏱️  Time to failure: {duration:.2f}s")
+        print(f"💥 Error: {e}")
+        print("=" * 60 + "\n")
+        raise
+
+
+@task
+def cd_release(c, skip_tests=False):
+    """Run complete CD pipeline: (optional tests) -> release -> upload."""
+    print("\n" + "=" * 60)
+    print("🚀 STARTING CD PIPELINE (RELEASE)")
+    print("=" * 60 + "\n")
+
+    start_time = datetime.datetime.now()
+
+    try:
+        if not skip_tests:
+            print("🧪 Running tests before release...")
+            ci_test(c)
+            ci_security(c)
+        else:
+            print("⚠️  WARNING: Tests skipped (skip_tests=True)")
+
+        print("\n" + "=" * 60)
+        print("📦 STAGE 4/4: CREATING RELEASE")
+        print("=" * 60 + "\n")
+
+        print("📦 Cleaning old artifacts...")
+        clean(c)
+
+        print("\n🏗️  Building and packaging release...")
+        release(c)
+
+        if os.getenv("BACKBLAZE_ACCESS_KEY_ID"):
+            print("\n☁️  Uploading to Backblaze B2...")
+            upload(c)
+        else:
+            print("\n⚠️  B2 upload skipped (variables not configured)")
+
+        end_time = datetime.datetime.now()
+        duration = (end_time - start_time).total_seconds()
+
+        print("\n" + "=" * 60)
+        print(f"✅ FULL CD PIPELINE - SUCCESS!")
+        print(f"⏱️  Total time: {duration:.2f}s")
+        print("=" * 60 + "\n")
+
+    except Exception as e:
+        end_time = datetime.datetime.now()
+        duration = (end_time - start_time).total_seconds()
+
+        print("\n" + "=" * 60)
+        print(f"❌ CD PIPELINE FAILED!")
+        print(f"⏱️  Time to failure: {duration:.2f}s")
+        print(f"💥 Error: {e}")
+        print("=" * 60 + "\n")
+        raise
+
+
+@task
+def ci_quick(c):
+    """Quick CI check: test + build (skip security scans)."""
+    print("\n" + "=" * 60)
+    print("⚡ QUICK CI PIPELINE (skip security scans)")
+    print("=" * 60 + "\n")
+
+    start_time = datetime.datetime.now()
+
+    try:
+        ci_test(c)
+        ci_build(c)
+
+        end_time = datetime.datetime.now()
+        duration = (end_time - start_time).total_seconds()
+
+        print("\n" + "=" * 60)
+        print(f"✅ QUICK CI PIPELINE - SUCCESS!")
+        print(f"⏱️  Total time: {duration:.2f}s")
+        print("=" * 60 + "\n")
+
+    except Exception as e:
+        end_time = datetime.datetime.now()
+        duration = (end_time - start_time).total_seconds()
+
+        print("\n" + "=" * 60)
+        print(f"❌ QUICK CI PIPELINE FAILED!")
+        print(f"⏱️  Time to failure: {duration:.2f}s")
+        print(f"💥 Error: {e}")
+        print("=" * 60 + "\n")
+        raise
+
 
 # =============================================================================
 # Main Namespace Configuration
 # =============================================================================
-# Create collections for namespacing
-go_coll = Collection('go', build, build_linux, clean, test, deps)
-docker_coll = Collection('docker', docker_build, docker_release, docker_run, docker_stop, docker_logs)
-release_coll = Collection('release', release, upload)
+go_coll = Collection("go", build, build_linux, clean, test, deps)
+docker_coll = Collection(
+    "docker", docker_build, docker_release, docker_run, docker_stop, docker_logs
+)
+release_coll = Collection("release", release, upload)
+security_coll = Collection(
+    "security",
+    security_scan,
+    security_summary,
+    security_gosec,
+    security_govulncheck,
+    security_go,
+)
+ci_coll = Collection("ci", ci_test, ci_security, ci_build, ci_full, ci_quick)
+cd_coll = Collection("cd", cd_release)
 
-# Main namespace
 ns = Collection(
     go_coll,
     docker_coll,
     release_coll,
+    security_coll,
+    ci_coll,
+    cd_coll,
     install,
     uninstall,
     test_cli,

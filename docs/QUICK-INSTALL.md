@@ -7,7 +7,7 @@ Multiple easy ways to get Go Overlay running in your container environment.
 ### Single Command Install
 ```bash
 # Download and install
-curl -L https://github.com/srelabz/go-overlay/releases/latest/download/service-manager -o go-overlay
+curl -L https://github.com/srelabz/go-overlay/releases/latest/download/go-overlay -o go-overlay
 chmod +x go-overlay
 sudo mv go-overlay /usr/local/bin/
 
@@ -20,7 +20,7 @@ go-overlay --help
 FROM alpine:latest
 
 # Download go-overlay directly from GitHub
-ADD https://github.com/srelabz/go-overlay/releases/latest/download/service-manager /go-overlay
+ADD https://github.com/srelabz/go-overlay/releases/latest/download/go-overlay /go-overlay
 RUN chmod +x /go-overlay
 
 # Copy your service configuration
@@ -35,7 +35,7 @@ ENTRYPOINT ["/go-overlay"]
 ### For Specific Version
 ```bash
 VERSION="v0.0.5"
-curl -L "https://github.com/srelabz/go-overlay/releases/download/${VERSION}/service-manager" -o go-overlay
+curl -L "https://github.com/srelabz/go-overlay/releases/download/${VERSION}/go-overlay" -o go-overlay
 chmod +x go-overlay
 ```
 
@@ -44,7 +44,7 @@ chmod +x go-overlay
 FROM alpine:latest
 
 ARG VERSION=v0.0.5
-ADD https://github.com/srelabz/go-overlay/releases/download/${VERSION}/service-manager /go-overlay
+ADD https://github.com/srelabz/go-overlay/releases/download/${VERSION}/go-overlay /go-overlay
 RUN chmod +x /go-overlay
 
 COPY services.toml /services.toml
@@ -164,7 +164,7 @@ FROM php:8.1-fpm-alpine
 RUN apk add --no-cache nginx
 
 # Install go-overlay
-ADD https://github.com/srelabz/go-overlay/releases/latest/download/service-manager /go-overlay
+ADD https://github.com/srelabz/go-overlay/releases/latest/download/go-overlay /go-overlay
 RUN chmod +x /go-overlay
 
 # Copy configuration
@@ -259,7 +259,7 @@ spec:
     - sh
     - -c
     - |
-      curl -L https://github.com/srelabz/go-overlay/releases/latest/download/service-manager \
+      curl -L https://github.com/srelabz/go-overlay/releases/latest/download/go-overlay \
         -o /shared/go-overlay
       chmod +x /shared/go-overlay
     volumeMounts:

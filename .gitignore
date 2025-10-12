@@ -32,5 +32,21 @@ docker-compose.override.yml
 .env
 .env.*
 
-# binarios
-entrypoint
+# Binaries
+go-overlay
+go-overlay_unix
+go-overlay-linux-*
+
+# CI/CD artifacts
+dist/
+release/
+*.sarif
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.venv/
+venv/
+*.egg-info/

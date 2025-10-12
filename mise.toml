@@ -1,6 +1,90 @@
 [tools]
-go = "1.23"
+go = "1.24"
 python = "3.12"
 
 [settings]
 python_venv_auto_create = true
+
+# =============================================================================
+# CI/CD Tasks - Centralized Pipeline Configuration
+# =============================================================================
+[tasks.ci]
+description = "Run complete CI pipeline (test + security + build)"
+run = "invoke ci.ci-full"
+
+[tasks."ci:quick"]
+description = "Run quick CI (test + build, skip security)"
+run = "invoke ci.ci-quick"
+
+[tasks."ci:test"]
+description = "Run tests only"
+run = "invoke ci.ci-test"
+
+[tasks."ci:security"]
+description = "Run security scans only"
+run = "invoke ci.ci-security"
+
+[tasks."ci:build"]
+description = "Build binary only"
+run = "invoke ci.ci-build"
+
+[tasks.cd]
+description = "Run CD pipeline (release with tests)"
+run = "invoke cd.cd-release"
+
+[tasks."cd:skip-tests"]
+description = "Run CD pipeline (release without tests)"
+run = "invoke cd.cd-release --skip-tests"
+
+# =============================================================================
+# Development Tasks
+# =============================================================================
+[tasks.dev]
+description = "Install dependencies and run tests"
+run = "invoke go.deps && invoke go.test"
+
+[tasks.build]
+description = "Build local binary"
+run = "invoke go.build"
+
+[tasks.clean]
+description = "Clean build artifacts"
+run = "invoke go.clean"
+
+[tasks.install]
+description = "Install go-overlay locally"
+run = "invoke install"
+
+# =============================================================================
+# Docker Tasks
+# =============================================================================
+[tasks."docker:build"]
+description = "Build Docker image"
+run = "invoke docker.build"
+
+[tasks."docker:run"]
+description = "Run Docker container"
+run = "invoke docker.run"
+
+[tasks."docker:stop"]
+description = "Stop Docker container"
+run = "invoke docker.stop"
+
+[tasks."docker:test"]
+description = "Test CLI commands in Docker"
+run = "invoke test-cli"
+
+# =============================================================================
+# Security Tasks
+# =============================================================================
+[tasks."security:full"]
+description = "Run all security scans (gosec + govulncheck)"
+run = "invoke security.go"
+
+[tasks."security:gosec"]
+description = "Run gosec static analysis"
+run = "invoke security.gosec"
+
+[tasks."security:vuln"]
+description = "Run govulncheck"
+run = "invoke security.govulncheck"

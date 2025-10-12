@@ -66,17 +66,10 @@ You can specify global timeouts in a `[timeouts]` block. These are the defaults 
 
 ```toml
 [timeouts]
-# Time to wait after a service starts before running its `pos_script`.
-post_script_timeout = 7
-
-# Max time for a service to shut down gracefully before being killed.
-service_shutdown_timeout = 10
-
-# Max time for the entire shutdown sequence to complete.
-global_shutdown_timeout = 30
-
-# Max time to wait for a dependency to start.
-dependency_wait_timeout = 300
+post_script_timeout = 7           # Time to wait after a service starts before running its `pos_script`.
+service_shutdown_timeout = 10     # Max time for a service to shut down gracefully before being killed.
+global_shutdown_timeout = 30      # Max time for the entire shutdown sequence to complete.
+dependency_wait_timeout = 300     # Max time to wait for a dependency to start.
 ```
 
 ### Service Definition
@@ -85,38 +78,21 @@ Each service is defined in a `[[services]]` block. Supported fields below reflec
 
 ```toml
 [[services]]
-# A unique name for the service. Used for logging and CLI commands. (Required)
-name = "my-app"
-
-# The command to execute. (Required)
-command = "/usr/local/bin/my-app-binary"
-
-# A list of arguments to pass to the command. (Optional)
-args = ["--config", "/etc/my-app.conf", "--verbose"]
-
-# If provided, go-overlay will tail this file instead of attaching a PTY. (Optional)
-# log_file = "/var/log/my-app.log"
-
-# A shell script to execute before starting the main command. (Optional)
-pre_script = "/scripts/setup-app.sh"
-
-# A shell script to execute after the service is considered started (runs after post_script_timeout). (Optional)
-pos_script = "/scripts/notify-startup.sh"
-
-# Name of a dependency that must be started before this service. (Optional)
-depends_on = "database"
-
-# Extra delay (in seconds) after dependency is up, before starting this service. (Optional)
-wait_after = 5
-
-# If omitted, defaults to true. (Optional)
-enabled = true
-
-# If true, a failure of this service triggers a graceful shutdown of all services. (Optional, default: false)
-required = false
-
-# Run the service as a specific user (uses `su`). (Optional)
-user = "www-data"
+name = "my-app"                             # A unique name for the service. Used for logging and CLI commands. (Required)
+command = "/usr/local/bin/my-app-binary"    # The command to execute. (Required)
+args = [
+  "--config",
+  "/etc/my-app.conf",
+  "--verbose"
+]                                           # A list of arguments to pass to the command. (Optional)
+# log_file = "/var/log/my-app.log"          # If provided, go-overlay will tail this file instead of attaching a PTY. (Optional)
+pre_script = "/scripts/setup-app.sh"        # A shell script to execute before starting the main command. (Optional)
+pos_script = "/scripts/notify-startup.sh"   # A shell script to execute after the service is considered started (runs after post_script_timeout). (Optional)
+depends_on = "database"                     # Name of a dependency that must be started before this service. (Optional)
+wait_after = 5                              # Extra delay (in seconds) after dependency is up, before starting this service. (Optional)
+enabled = true                              # If omitted, defaults to true. (Optional)
+required = false                            # If true, a failure of this service triggers a graceful shutdown of all services. (Optional, default: false)
+user = "www-data"                           # Run the service as a specific user (uses `su`). (Optional)
 ```
 
 ## Auto-Installation
@@ -155,22 +131,41 @@ We provide a dedicated `examples/` directory with practical configurations:
 This project uses `invoke` with `mise` for task management.
 
 ```bash
-# List available tasks
-mise exec -- invoke --list
-
-# Build the Go binary for your local OS
-mise exec -- invoke go.build
-
-# Install/uninstall the binary
-mise exec -- invoke install
-mise exec -- invoke uninstall
-
-# Build the Docker image
-mise exec -- invoke docker.build
-
-# Run tests
-mise exec -- invoke go.test
+mise exec -- invoke --list         # Lista todas as tasks disponíveis
+mise exec -- invoke go.build       # Compila o binário Go para seu SO local
+mise exec -- invoke install        # Instala o binário (faça uninstall com a próxima linha)
+mise exec -- invoke uninstall      # Desinstala o binário instalado
+mise exec -- invoke docker.build   # Constrói a imagem Docker
+mise exec -- invoke go.test        # Roda os testes
 ```
+
+## 🚀 CI/CD Pipeline
+
+Este projeto possui um pipeline completo de CI/CD com testes automatizados, verificações de segurança e processo de release.
+
+### Comandos Rápidos
+
+```bash
+mise run ci          # Pipeline CI completo (testes + segurança + build)
+mise run ci:quick    # Pipeline rápido (pula scans de segurança)
+mise run cd          # Pipeline CD (release)
+mise run ci:test     # Apenas testes
+mise run ci:security # Apenas segurança
+```
+
+### Pipeline Structure
+
+```
+CI Pipeline:  Tests → Security → Build
+CD Pipeline:  CI Pipeline → Release → Upload
+```
+
+**Full documentation**: [docs/CI-CD-PIPELINE.md](docs/CI-CD-PIPELINE.md)
+
+### Automatic Execution
+
+- **CI**: Runs on all PRs and pushes to `main`
+- **CD**: Runs when creating `v*` tags or pushing to `main`
 
 ## Contributing
 

@@ -1,6 +1,6 @@
 module go-overlay
 
-go 1.23.4
+go 1.24.8
 
 require (
 	github.com/creack/pty v1.1.24

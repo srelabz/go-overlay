@@ -1,0 +1,7 @@
+[releases.v0-1-0]
+title = "Initial stable release"
+body = """
+- First stable release of go-overlay
+- Graceful shutdown and IPC
+- Config validation and PTY logs
+"""

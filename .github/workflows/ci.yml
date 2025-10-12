@@ -1,0 +1,73 @@
+name: CI Pipeline
+
+permissions:
+  contents: read
+  actions: read
+
+on:
+  pull_request:
+    branches: ['main']
+  push:
+    branches: ['main']
+  workflow_dispatch: {}
+
+jobs:
+  ci:
+    name: CI - Test, Security & Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+        with: 
+          fetch-depth: 0
+
+      - name: 🔧 Setup Go
+        uses: actions/setup-go@v5
+        with: 
+          go-version: '1.24.8'
+
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@v5
+        with: 
+          python-version: '3.12'
+
+      - name: 📦 Install Python dependencies
+        run: pip install invoke python-dotenv boto3 minio requests
+
+      - name: 🧪 Run CI Pipeline (test + security + build)
+        run: invoke ci.full
+        env:
+          CI: true
+
+      - name: 📊 Upload security reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-reports
+          path: dist/security/
+          retention-days: 30
+
+      - name: 📦 Upload binary artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-overlay-binary
+          path: go-overlay_unix
+          retention-days: 7
+
+      - name: ✅ CI Pipeline Summary
+        if: success()
+        run: |
+          echo "### ✅ CI Pipeline Passed!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- 🧪 Tests: Passed" >> $GITHUB_STEP_SUMMARY
+          echo "- 🔒 Security Scans: Passed" >> $GITHUB_STEP_SUMMARY
+          echo "- 🔨 Build: Passed" >> $GITHUB_STEP_SUMMARY
+
+      - name: ❌ CI Pipeline Failed
+        if: failure()
+        run: |
+          echo "### ❌ CI Pipeline Failed!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Check the logs above for details." >> $GITHUB_STEP_SUMMARY

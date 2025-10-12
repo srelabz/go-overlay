@@ -1342,7 +1342,7 @@ func listServices() error {
 	}
 
 	if !response.Success {
-		return fmt.Errorf(response.Message)
+		return fmt.Errorf("%s", response.Message)
 	}
 
 	fmt.Printf("%-15s %-10s %-8s %-12s %-8s %s\n", 
@@ -1380,7 +1380,7 @@ func restartService(serviceName string) error {
 	if response.Success {
 		fmt.Println(response.Message)
 	} else {
-		return fmt.Errorf(response.Message)
+		return fmt.Errorf("%s", response.Message)
 	}
 
 	return nil
@@ -1395,7 +1395,7 @@ func showStatus() error {
 	if response.Success {
 		fmt.Println("System Status:", response.Message)
 	} else {
-		return fmt.Errorf(response.Message)
+		return fmt.Errorf("%s", response.Message)
 	}
 
 	return nil

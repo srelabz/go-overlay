@@ -1,105 +1,304 @@
 #!/usr/bin/env python3
-import os, subprocess, sys, requests, shlex, json, tempfile, pathlib
+"""Script to automatically create releases on GitHub."""
 
-def sh(cmd, output=False):
-    if output:
-        return subprocess.check_output(cmd, shell=True).decode().strip()
-    else:
-        subprocess.check_call(cmd, shell=True)
+from typing import Optional
+from pathlib import Path
+import subprocess
+import requests
+import tomllib
+import sys
+import os
 
-server = os.getenv("GITHUB_SERVER_URL", "")
-repo   = os.getenv("GITHUB_REPOSITORY", "")
-ref_tp = os.getenv("GITHUB_REF_TYPE", "")
-ref    = os.getenv("GITHUB_REF", "")
-tok    = os.getenv("GITHUB_TOKEN", "")
-tag    = ""
 
-print(f"DEBUG: Server: {server}")
-print(f"DEBUG: Repo: {repo}")
-print(f"DEBUG: Ref type: {ref_tp}")
-print(f"DEBUG: Ref: {ref}")
 
-if ref_tp == "branch":
-    print("Branch push detected, creating new tag...")
-    sh("git fetch --prune --tags")
-    last = sh("git tag --sort=-v:refname | head -n1", output=True) or "v0.0.0"
-    print(f"Last tag: {last}")
-    a, b, c = map(int, last.lstrip("v").split("."))
-    tag = f"v{a}.{b}.{c+1}"
-    print(f"Creating new tag: {tag}")
-    sh(f"git tag {tag}")
-    if server == "https://github.com":
-        sh(f"git push https://x-access-token:{tok}@github.com/{repo}.git {tag}")
-    else:
-        sh("git push origin " + tag)
-    print(f"Tag {tag} pushed, exiting to let tag trigger handle the release")
-    sys.exit(0)
-elif ref_tp == "tag":
-    tag = ref.rsplit("/", 1)[-1]
-    print(f"Tag push detected: {tag}")
-else:
-    print(f"Unknown ref type: {ref_tp}")
-    sys.exit(1)
+class GitHubReleaser:
+    """Manages GitHub release creation."""
 
-print(f"Building binary for tag: {tag}")
-sh(f'CGO_ENABLED=0 GOOS=linux go build -a -ldflags="-X main.version={tag}" -o service-manager .')
+    def __init__(self):
+        self.server = os.getenv("GITHUB_SERVER_URL", "")
+        self.repo = os.getenv("GITHUB_REPOSITORY", "")
+        self.ref_type = os.getenv("GITHUB_REF_TYPE", "")
+        self.ref = os.getenv("GITHUB_REF", "")
+        self.token = os.getenv("GITHUB_TOKEN", "")
+        self.binary_name = "go-overlay"
 
-if not os.path.exists("service-manager"):
-    print("ERROR: Binary service-manager not found after build")
-    sys.exit(1)
+    def run_command(
+        self,cmd: str,capture_output: bool = False,
+    ) -> Optional[str]:
+        """Executes a shell command."""
+        try:
+            if capture_output:
+                result = subprocess.check_output(cmd, shell=True, text=True)
+                return result.strip()
+            subprocess.check_call(cmd, shell=True)
+            return None
+        except subprocess.CalledProcessError as e:
+            print(f"ERROR: Command failed: {cmd}")
+            raise e
 
-file_size = os.path.getsize("service-manager")
-print(f"Binary built successfully: {file_size} bytes")
+    def print_debug_info(self):
+        """Prints debug information."""
+        print(f"DEBUG: Server: {self.server}")
+        print(f"DEBUG: Repo: {self.repo}")
+        print(f"DEBUG: Ref type: {self.ref_type}")
+        print(f"DEBUG: Ref: {self.ref}")
 
-if server != "https://github.com":
-    print("Gitea detected; skipping release upload")
-    sys.exit(0)
+    def get_next_version(self) -> str:
+        """Calculates the next version based on existing tags."""
+        self.run_command("git fetch --prune --tags")
+        last_tag = self.run_command(
+            "git tag --sort=-v:refname | head -n1", capture_output=True
+        )
 
-print("Creating GitHub release...")
-api = f"https://api.github.com/repos/{repo}/releases"
-headers = {"Authorization": f"Bearer {tok}", "Accept": "application/vnd.github+json"}
-data = {"tag_name": tag, "name": f"Release {tag}", "draft": False, "prerelease": False}
+        if not last_tag:
+            last_tag = "v0.0.0"
 
-print(f"Creating release for tag: {tag}")
-r = requests.post(api, headers=headers, json=data)
+        print(f"Last tag: {last_tag}")
 
-if r.status_code == 422:
-    print("Release already exists, fetching existing release...")
-    r = requests.get(f"{api}/tags/{tag}", headers=headers)
-elif r.status_code != 201:
-    print(f"ERROR: Failed to create release. Status: {r.status_code}, Response: {r.text}")
-    sys.exit(1)
+        version_str = last_tag.lstrip("v")
+        major, minor, patch = map(int, version_str.split("."))
 
-if r.status_code not in [200, 201]:
-    print(f"ERROR: Failed to get release info. Status: {r.status_code}, Response: {r.text}")
-    sys.exit(1)
+        new_tag = f"v{major}.{minor}.{patch + 1}"
+        print(f"Creating new tag: {new_tag}")
 
-release_data = r.json()
-release_id = release_data["id"]
-upload_url_template = release_data["upload_url"]
-print(f"Release ID: {release_id}")
-print(f"Upload URL template: {upload_url_template}")
+        return new_tag
 
-upload_url = upload_url_template.replace("{?name,label}", f"?name=service-manager")
-print(f"Final upload URL: {upload_url}")
+    def push_tag(self, tag: str):
+        """Creates and pushes a new tag to the repository."""
+        self.run_command(f"git tag {tag}")
 
-with open("service-manager", "rb") as f:
-    upload_headers = {
-        "Authorization": f"Bearer {tok}",
-        "Content-Type": "application/octet-stream",
-        "Accept": "application/vnd.github+json"
-    }
+        if self.server == "https://github.com":
+            push_url = (
+                f"https://x-access-token:{self.token}@github.com/{self.repo}.git"
+            )
+            self.run_command(f"git push {push_url} {tag}")
+        else:
+            self.run_command(f"git push origin {tag}")
 
-    print(f"Uploading binary ({file_size} bytes)...")
-    upload_response = requests.post(upload_url, headers=upload_headers, data=f.read())
+        print(f"Tag {tag} pushed successfully")
 
-    if upload_response.status_code == 201:
-        print("✓ Binary uploaded successfully!")
-        asset_info = upload_response.json()
-        print(f"Asset URL: {asset_info['browser_download_url']}")
-    else:
-        print(f"ERROR: Failed to upload binary. Status: {upload_response.status_code}")
-        print(f"Response: {upload_response.text}")
-        sys.exit(1)
+    def handle_branch_push(self) -> str:
+        """Handles a branch push by creating a new tag."""
+        print("Branch push detected, creating new tag...")
+        tag = self.get_next_version()
+        self.push_tag(tag)
+        print(f"Tag {tag} pushed, exiting to let tag trigger handle the release")
+        sys.exit(0)
 
-print("Release created successfully:", tag)
+    def extract_tag_from_ref(self) -> str:
+        """Extracts the tag name from the ref."""
+        return self.ref.rsplit("/", 1)[-1]
+
+    def build_binary(self, tag: str):
+        """Builds the Go binary with the specified version."""
+        print(f"Building binary for tag: {tag}")
+
+        build_cmd = (
+            f"CGO_ENABLED=0 GOOS=linux go build -a "
+            f'-ldflags="-X main.version={tag}" -o {self.binary_name} .'
+        )
+        self.run_command(build_cmd)
+
+        binary_path = Path(self.binary_name)
+        if not binary_path.exists():
+            print(f"ERROR: Binary {self.binary_name} not found after build")
+            sys.exit(1)
+
+        file_size = binary_path.stat().st_size
+        print(f"Binary built successfully: {file_size:,} bytes")
+
+        return file_size
+
+    def update_version_file(self, tag: str):
+        """Updates the VERSION file to match the release tag and pushes to main."""
+        version_str = tag.lstrip("v")
+        print(f"Updating VERSION file to: {version_str}")
+
+        self.run_command("git config user.name 'github-actions'", capture_output=False)
+        self.run_command(
+            "git config user.email 'github-actions@github.com'",
+            capture_output=False,
+        )
+
+        self.run_command("git fetch origin main", capture_output=False)
+        self.run_command("git checkout -B main origin/main", capture_output=False)
+
+        Path("VERSION").write_text(version_str + "\n", encoding="utf-8")
+
+        self.run_command("git add VERSION", capture_output=False)
+        try:
+            self.run_command(
+                f"git commit -m 'chore(release): set VERSION to {version_str}'",
+                capture_output=False,
+            )
+        except subprocess.CalledProcessError:
+            print("No changes to VERSION; skipping commit")
+            return
+
+        if self.server == "https://github.com":
+            push_url = (
+                f"https://x-access-token:{self.token}@github.com/{self.repo}.git"
+            )
+            self.run_command("git push %s HEAD:main" % push_url, capture_output=False)
+        else:
+            self.run_command("git push origin HEAD:main", capture_output=False)
+
+    def create_or_get_release(self, tag: str) -> dict:
+        """Creates or retrieves an existing release on GitHub."""
+        api_url = f"https://api.github.com/repos/{self.repo}/releases"
+        headers = {
+            "Authorization": f"Bearer {self.token}",
+            "Accept": "application/vnd.github+json",
+        }
+
+        body = os.getenv("RELEASE_BODY", "").strip()
+        if not body and Path("releseases_notes.toml").exists():
+            try:
+                with open("releseases_notes.toml", "rb") as f:
+                    data = tomllib.load(f)
+                releases = data.get("releases", {}) if isinstance(data, dict) else {}
+                version_str = tag.lstrip("v")
+                candidates = [
+                    tag,
+                    version_str,
+                    tag.replace(".", "-"),
+                    version_str.replace(".", "-"),
+                ]
+                entry = None
+                for key in candidates:
+                    if isinstance(releases, dict) and key in releases:
+                        entry = releases.get(key)
+                        break
+                if isinstance(entry, dict):
+                    title = entry.get("title") or f"Release {tag}"
+                    mapped_body = entry.get("body", "").strip()
+                    if title:
+                        self.custom_release_name = title
+                    if mapped_body:
+                        body = mapped_body
+            except Exception as e:
+                print(f"WARNING: Could not parse releseases_notes.toml: {e}")
+        if not body:
+            try:
+                body = self.run_command(
+                    f"git tag -l --format='%(contents)' {tag}", capture_output=True
+                ) or ""
+            except Exception:
+                body = ""
+        if not body:
+            try:
+                last_tag = self.run_command(
+                    "git tag --sort=-v:refname | sed -n '2p'", capture_output=True
+                )
+                if last_tag:
+                    body = self.run_command(
+                        f"git log --pretty=format:'- %s (%h)' {last_tag}..HEAD",
+                        capture_output=True,
+                    )
+                else:
+                    body = self.run_command(
+                        "git log --pretty=format:'- %s (%h)'", capture_output=True
+                    )
+            except Exception:
+                body = ""
+
+        release_data = {
+            "tag_name": tag,
+            "name": getattr(self, "custom_release_name", None) or f"Release {tag}",
+            "body": body or f"Automated release for {tag}",
+            "draft": False,
+            "prerelease": False,
+        }
+
+        print(f"Creating release for tag: {tag}")
+        response = requests.post(api_url, headers=headers, json=release_data)
+
+        if response.status_code == 422:
+            print("Release already exists, fetching existing release...")
+            response = requests.get(f"{api_url}/tags/{tag}", headers=headers)
+        elif response.status_code != 201:
+            print(
+                f"ERROR: Failed to create release. "
+                f"Status: {response.status_code}, Response: {response.text}"
+            )
+            sys.exit(1)
+
+        if response.status_code not in (200, 201):
+            print(
+                f"ERROR: Failed to get release info. "
+                f"Status: {response.status_code}, Response: {response.text}"
+            )
+            sys.exit(1)
+
+        return response.json()
+
+    def upload_binary(self, release_data: dict, file_size: int):
+        """Uploads the binary to the release."""
+        upload_url_template = release_data["upload_url"]
+        upload_url = upload_url_template.replace(
+            "{?name,label}", f"?name={self.binary_name}"
+        )
+
+        print(f"Release ID: {release_data['id']}")
+        print(f"Uploading binary ({file_size:,} bytes)...")
+
+        headers = {
+            "Authorization": f"Bearer {self.token}",
+            "Content-Type": "application/octet-stream",
+            "Accept": "application/vnd.github+json",
+        }
+
+        with open(self.binary_name, "rb") as binary_file:
+            response = requests.post(
+                upload_url, headers=headers, data=binary_file.read()
+            )
+
+        if response.status_code == 201:
+            print("✓ Binary uploaded successfully!")
+            asset_info = response.json()
+            print(f"Asset URL: {asset_info['browser_download_url']}")
+        else:
+            print(
+                f"ERROR: Failed to upload binary. "
+                f"Status: {response.status_code}\nResponse: {response.text}"
+            )
+            sys.exit(1)
+
+    def run(self):
+        """Runs the complete release process."""
+        self.print_debug_info()
+
+        if self.ref_type == "branch":
+            self.handle_branch_push()
+        elif self.ref_type == "tag":
+            tag = self.extract_tag_from_ref()
+            print(f"Tag push detected: {tag}")
+            try:
+                self.update_version_file(tag)
+            except Exception as e:
+                print(f"WARNING: Could not update VERSION on main: {e}")
+        else:
+            print(f"Unknown ref type: {self.ref_type}")
+            sys.exit(1)
+
+        file_size = self.build_binary(tag)
+
+        if self.server != "https://github.com":
+            print("Gitea detected; skipping release upload")
+            sys.exit(0)
+
+        print("Creating GitHub release...")
+        release_data = self.create_or_get_release(tag)
+        self.upload_binary(release_data, file_size)
+
+        print(f"Release created successfully: {tag}")
+
+
+def main():
+    """Entry point of the script."""
+    releaser = GitHubReleaser()
+    releaser.run()
+
+
+if __name__ == "__main__":
+    main()

@@ -209,7 +209,7 @@ Notes:
 FROM alpine:latest
 
 # Install go-overlay
-ADD https://github.com/srelabz/go-overlay/releases/latest/download/service-manager /go-overlay
+ADD https://github.com/srelabz/go-overlay/releases/latest/download/go-overlay /go-overlay
 RUN chmod +x /go-overlay
 
 # Copy configuration
