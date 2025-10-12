@@ -21,6 +21,9 @@ class GitHubReleaser:
         self.ref = os.getenv("GITHUB_REF", "")
         self.token = os.getenv("GITHUB_TOKEN", "")
         self.binary_name = "go-overlay"
+        self.update_latest = os.getenv(
+            "UPDATE_LATEST_RELEASE", ""
+        ).lower() in ("1", "true", "yes")
 
     def run_command(
         self,cmd: str,capture_output: bool = False,
@@ -62,6 +65,18 @@ class GitHubReleaser:
         print(f"Creating new tag: {new_tag}")
 
         return new_tag
+
+    def get_latest_tag(self) -> str:
+        """Return the latest tag (highest semver) available in the repo."""
+        self.run_command("git fetch --prune --tags")
+        last_tag = self.run_command(
+            "git tag --sort=-v:refname | head -n1", capture_output=True
+        )
+        if not last_tag:
+            print("ERROR: No tags found; cannot update latest release.")
+            sys.exit(1)
+        print(f"Latest tag: {last_tag}")
+        return last_tag
 
     def push_tag(self, tag: str):
         """Creates and pushes a new tag to the repository."""
@@ -252,6 +267,26 @@ class GitHubReleaser:
             "Accept": "application/vnd.github+json",
         }
 
+        assets_api = release_data.get("assets_url")
+        if assets_api:
+            list_headers = {
+                "Authorization": f"Bearer {self.token}",
+                "Accept": "application/vnd.github+json",
+            }
+            try:
+                resp = requests.get(assets_api, headers=list_headers)
+                if resp.status_code == 200:
+                    for asset in resp.json():
+                        if asset.get("name") == self.binary_name:
+                            asset_id = asset.get("id")
+                            del_url = f"https://api.github.com/repos/{self.repo}/releases/assets/{asset_id}"
+                            print(f"Deleting existing asset '{self.binary_name}' (id={asset_id})")
+                            requests.delete(del_url, headers=list_headers)
+                else:
+                    print(f"WARNING: Could not list assets (status {resp.status_code})")
+            except Exception as e:
+                print(f"WARNING: Could not delete existing asset: {e}")
+
         with open(self.binary_name, "rb") as binary_file:
             response = requests.post(
                 upload_url, headers=headers, data=binary_file.read()
@@ -273,7 +308,12 @@ class GitHubReleaser:
         self.print_debug_info()
 
         if self.ref_type == "branch":
-            self.handle_branch_push()
+            if self.update_latest:
+                tag = self.get_latest_tag()
+                print(f"Branch push: updating existing release for {tag}")
+            else:
+                print("Branch push detected; UPDATE_LATEST_RELEASE is not set. Skipping release.")
+                sys.exit(0)
         elif self.ref_type == "tag":
             tag = self.extract_tag_from_ref()
             print(f"Tag push detected: {tag}")
@@ -291,7 +331,7 @@ class GitHubReleaser:
             print("Gitea detected; skipping release upload")
             sys.exit(0)
 
-        print("Creating GitHub release...")
+        print("Creating or updating GitHub release...")
         release_data = self.create_or_get_release(tag)
         self.upload_binary(release_data, file_size)
 
