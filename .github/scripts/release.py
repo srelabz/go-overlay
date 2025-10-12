@@ -152,6 +152,7 @@ class GitHubReleaser:
         }
 
         body = ""
+        toml_title = None
         if Path("releseases_notes.toml").exists():
             try:
                 with open("releseases_notes.toml", "rb") as f:
@@ -170,10 +171,8 @@ class GitHubReleaser:
                         entry = releases.get(key)
                         break
                 if isinstance(entry, dict):
-                    title = entry.get("title") or f"Release {tag}"
+                    toml_title = (entry.get("title") or "").strip()
                     mapped_body = entry.get("body", "").strip()
-                    if title:
-                        self.custom_release_name = title
                     if mapped_body:
                         body = mapped_body
             except Exception as e:
@@ -204,10 +203,13 @@ class GitHubReleaser:
             except Exception:
                 body = ""
 
+        if toml_title:
+            body = (toml_title + "\n\n" + (body or "")).strip()
+
         release_data = {
             "tag_name": tag,
-            "name": getattr(self, "custom_release_name", None) or f"Release {tag}",
-            "body": body or f"Automated release for {tag}",
+            "name": tag,
+            "body": (body or f"Automated release for {tag}"),
             "draft": False,
             "prerelease": False,
         }
