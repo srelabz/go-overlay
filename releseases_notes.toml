@@ -1,7 +1,11 @@
-[releases.v0-1-0]
+[releases.v0-1-1]
 title = "Initial stable release"
 body = """
-- First stable release of go-overlay
+- First stable LTS release of go-overlay
 - Graceful shutdown and IPC
 - Config validation and PTY logs
+- Dependency management
+- Pre and pos scripts
+- Restart services
+- Add support user running services
 """
