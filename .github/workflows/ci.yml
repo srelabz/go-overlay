@@ -36,7 +36,7 @@ jobs:
         run: pip install invoke python-dotenv boto3 minio requests
 
       - name: 🧪 Run CI Pipeline (test + security + build)
-        run: invoke ci.full
+        run: invoke ci.ci-full
         env:
           CI: true
 
