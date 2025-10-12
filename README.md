@@ -19,7 +19,7 @@ Go-based service orchestrator inspired by s6-overlay for running multiple servic
 ### Download and Install
 ```bash
 # Download latest release
-curl -L https://github.com/srelabz/go-overlay/releases/latest/download/service-manager -o go-overlay
+curl -L https://github.com/srelabz/go-overlay/releases/latest/download/go-overlay -o go-overlay
 chmod +x go-overlay
 
 # Auto-install in PATH (creates symlink at /go-overlay)
@@ -36,7 +36,7 @@ go-overlay restart nginx
 FROM alpine:latest
 
 # Download go-overlay directly from GitHub releases
-ADD https://github.com/srelabz/go-overlay/releases/latest/download/service-manager /go-overlay
+ADD https://github.com/srelabz/go-overlay/releases/latest/download/go-overlay /go-overlay
 RUN chmod +x /go-overlay
 
 # Copy your service configuration
