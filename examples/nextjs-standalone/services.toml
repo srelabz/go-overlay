@@ -1,0 +1,10 @@
+[timeouts]
+service_shutdown_timeout = 10
+global_shutdown_timeout = 30
+
+[[services]]
+name = "nextjs-app"
+command = "/usr/bin/node"
+args = ["/app/server.js"]
+enabled = true
+required = true

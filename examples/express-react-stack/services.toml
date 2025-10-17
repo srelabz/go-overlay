@@ -1,0 +1,28 @@
+[timeouts]
+service_shutdown_timeout = 10
+global_shutdown_timeout = 30
+dependency_wait_timeout = 60
+
+# Database Migration with Prisma (runs once and exits)
+[[services]]
+name = "db-migration"
+command = "/usr/bin/npx"
+args = ["prisma", "migrate", "deploy"]
+enabled = true
+required = false
+
+[[services]]
+name = "express-backend"
+command = "/usr/bin/node"
+args = ["/app/server.js"]
+enabled = true
+required = true
+depends_on = "db-migration"
+wait_after = 1
+
+[[services]]
+name = "caddy-frontend"
+command = "/usr/bin/caddy"
+args = ["run", "--config", "/etc/caddy/Caddyfile"]
+enabled = true
+required = true

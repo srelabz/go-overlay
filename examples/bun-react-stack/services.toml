@@ -1,0 +1,17 @@
+[timeouts]
+service_shutdown_timeout = 10
+global_shutdown_timeout = 30
+
+[[services]]
+name = "bun-backend"
+command = "/root/.bun/bin/bun"
+args = ["run", "/app/server.ts"]
+enabled = true
+required = true
+
+[[services]]
+name = "caddy-frontend"
+command = "/usr/bin/caddy"
+args = ["run", "--config", "/etc/caddy/Caddyfile"]
+enabled = true
+required = true

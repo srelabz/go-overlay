@@ -1,6 +1,0 @@
-[[services]]
-name = "web-server"
-command = "python3"
-args = ["-m", "http.server", "8080"]
-enabled = true
-required = true

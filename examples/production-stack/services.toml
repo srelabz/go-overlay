@@ -1,0 +1,66 @@
+[timeouts]
+service_shutdown_timeout = 15
+global_shutdown_timeout = 45
+dependency_wait_timeout = 90
+
+# Redis Cache Service
+[[services]]
+name = "redis"
+command = "/usr/bin/redis-server"
+args = ["--bind", "0.0.0.0", "--port", "6379", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+enabled = true
+required = true
+
+# PostgreSQL Database
+[[services]]
+name = "postgres"
+command = "/usr/lib/postgresql/14/bin/postgres"
+args = ["-D", "/var/lib/postgresql/data"]
+enabled = true
+required = true
+user = "postgres"
+
+# Database Migration (runs once and exits)
+[[services]]
+name = "db-migration"
+command = "/usr/local/bin/alembic"
+args = ["upgrade", "head"]
+enabled = true
+required = false
+depends_on = "postgres"
+wait_after = 3
+pre_script = """
+#!/bin/bash
+echo "Waiting for PostgreSQL to be ready..."
+until pg_isready -h localhost -p 5432; do
+  echo "PostgreSQL is unavailable - sleeping"
+  sleep 1
+done
+echo "PostgreSQL is ready - running migrations"
+"""
+
+# FastAPI Backend
+[[services]]
+name = "fastapi-backend"
+command = "/usr/local/bin/uvicorn"
+args = ["app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+enabled = true
+required = true
+depends_on = "redis"
+wait_after = 2
+pre_script = """
+#!/bin/bash
+echo "Checking Redis connection..."
+redis-cli -h localhost -p 6379 ping || exit 1
+echo "Checking PostgreSQL connection..."
+pg_isready -h localhost -p 5432 || exit 1
+echo "All dependencies ready!"
+"""
+
+# Caddy Frontend
+[[services]]
+name = "caddy-frontend"
+command = "/usr/bin/caddy"
+args = ["run", "--config", "/etc/caddy/Caddyfile"]
+enabled = true
+required = true

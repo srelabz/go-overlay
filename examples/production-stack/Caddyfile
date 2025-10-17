@@ -1,0 +1,18 @@
+:3000 {
+  root * /var/www
+  encode gzip
+
+  # API proxy
+  reverse_proxy /api/* localhost:8000
+
+  # WebSocket support (if needed)
+  @websockets {
+    header Connection *Upgrade*
+    header Upgrade websocket
+  }
+  reverse_proxy @websockets localhost:8000
+
+  # React Router SPA fallback
+  try_files {path} /index.html
+  file_server
+}

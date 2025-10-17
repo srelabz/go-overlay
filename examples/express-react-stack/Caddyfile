@@ -1,0 +1,9 @@
+:3000 {
+  root * /var/www
+  encode gzip
+
+  reverse_proxy /api/* localhost:4000
+
+  try_files {path} /index.html
+  file_server
+}

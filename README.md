@@ -16,21 +16,6 @@ Go-based service orchestrator inspired by s6-overlay for running multiple servic
 
 ## Quick Start
 
-### Download and Install
-```bash
-# Download latest release
-curl -L https://github.com/srelabz/go-overlay/releases/latest/download/go-overlay -o go-overlay
-chmod +x go-overlay
-
-# Auto-install in PATH (creates symlink at /go-overlay)
-sudo ./go-overlay install
-
-# Now you can use from anywhere:
-go-overlay list
-go-overlay status
-go-overlay restart nginx
-```
-
 ### Docker Usage
 ```dockerfile
 FROM alpine:latest
@@ -44,6 +29,21 @@ COPY services.toml /services.toml
 
 # Set as entrypoint
 ENTRYPOINT ["/go-overlay"]
+```
+
+### Download and Install for developing new Stack
+```bash
+# Download latest release
+curl -L https://github.com/srelabz/go-overlay/releases/latest/download/go-overlay -o go-overlay
+chmod +x go-overlay
+
+# Auto-install in PATH (creates symlink at /go-overlay)
+sudo ./go-overlay install
+
+# Now you can use from anywhere:
+go-overlay list
+go-overlay status
+go-overlay restart nginx
 ```
 
 ## CLI Commands
@@ -119,12 +119,42 @@ When running in daemon mode, Go Overlay automatically:
 
 ## Examples
 
-We provide a dedicated `examples/` directory with practical configurations:
+We provide production-ready examples with real stacks in the `examples/` directory:
 
-- **[Simple Web Server](./examples/simple-web-server/README.md)**: Minimal config to run a single service.
-- **[Web Stack with Dependencies](./examples/web-stack-deps/README.md)**: Control startup order using `depends_on`.
-- **[Background Worker](./examples/background-worker/README.md)**: Use `required` for critical vs. non-critical services.
-- **[Advanced Features](./examples/advanced-features/README.md)**: `pre_script`, `pos_script`, `user`, and `log_file` usage.
+### Modern Stacks
+
+- **[FastAPI + React + Caddy](./examples/fastapi-react-stack/README.md)**: Python stack with Alembic migrations, REST API and React frontend served by Caddy
+- **[Express.js + React + Caddy](./examples/express-react-stack/README.md)**: Full-stack Node.js with Prisma ORM, migrations and reverse proxy
+- **[Bun + React + Caddy](./examples/bun-react-stack/README.md)**: Performance Stack with Bun runtime (3x faster than Node.js), native TypeScript
+- **[Next.js Standalone](./examples/nextjs-standalone/README.md)**: Next.js in standalone mode with SSR/SSG and integrated API Routes
+
+### Complete Production Stack
+
+- **[Production Stack](./examples/production-stack/README.md)**: Complete stack with FastAPI + React + Redis + PostgreSQL, including:
+  - Distributed cache with Redis
+  - PostgreSQL database
+  - Automatic migrations with Alembic
+  - Health checks on all services
+  - Dependency validation with `pre_script`
+  - WebSocket support
+
+### Choose Your Stack
+
+| Stack | Ideal for |
+|-------|-----------|
+| **FastAPI + React** | REST APIs, Machine Learning, Python backend |
+| **Express + React** | JavaScript full-stack, rapid development |
+| **Bun + React** | Maximum performance, native TypeScript, reduce infrastructure costs |
+| **Next.js** | Important SEO, SSR/SSG, static + dynamic pages |
+| **Production Stack** | Production applications needing cache and database |
+
+All examples include:
+- ✅ Complete Dockerfiles
+- ✅ Dependency configuration
+- ✅ Automatic migrations
+- ✅ Reverse proxy with Caddy
+- ✅ Graceful shutdown
+- ✅ Step-by-step instructions
 
 ## Development
 

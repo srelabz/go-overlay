@@ -1,0 +1,28 @@
+[timeouts]
+service_shutdown_timeout = 10
+global_shutdown_timeout = 30
+dependency_wait_timeout = 60
+
+# Database Migration (runs once and exits)
+[[services]]
+name = "db-migration"
+command = "/usr/local/bin/alembic"
+args = ["upgrade", "head"]
+enabled = true
+required = false
+
+[[services]]
+name = "fastapi-backend"
+command = "/usr/local/bin/uvicorn"
+args = ["app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+enabled = true
+required = true
+depends_on = "db-migration"
+wait_after = 1
+
+[[services]]
+name = "caddy-frontend"
+command = "/usr/bin/caddy"
+args = ["run", "--config", "/etc/caddy/Caddyfile"]
+enabled = true
+required = true
