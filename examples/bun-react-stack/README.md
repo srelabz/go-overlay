@@ -178,8 +178,8 @@ RUN curl -fsSL https://bun.sh/install | bash
 ENV PATH="/root/.bun/bin:${PATH}"
 
 # Download go-overlay
-ADD https://github.com/srelabz/go-overlay/releases/latest/download/go-overlay /usr/local/bin/go-overlay
-RUN chmod +x /usr/local/bin/go-overlay
+ADD https://github.com/srelabz/go-overlay/releases/latest/download/go-overlay /go-overlay
+RUN chmod +x /go-overlay
 
 # Create directories
 RUN mkdir -p /app /var/www /etc/caddy
@@ -194,11 +194,11 @@ COPY frontend/dist/ /var/www/
 
 # Copy configs
 COPY Caddyfile /etc/caddy/Caddyfile
-COPY services.toml /etc/go-overlay/services.toml
+COPY services.toml /services.toml
 
 EXPOSE 3000 4000
 
-ENTRYPOINT ["/usr/local/bin/go-overlay", "daemon"]
+ENTRYPOINT ["/go-overlay"]
 ```
 
 ## How to Run

@@ -1,87 +1,87 @@
-# Teste de Graceful Shutdown - Go Overlay
+# Graceful Shutdown Testing - Go Overlay
 
-Este diretório contém tudo necessário para testar o sistema de graceful shutdown do Go Overlay.
+This directory contains everything needed to test the Go Overlay graceful shutdown system.
 
-## Serviços de Teste
+## Test Services
 
-O container de teste inclui:
+The test container includes:
 
-1. **nginx** - Servidor web na porta 80
+1. **nginx** - Web server on port 80
    - Pre-script: `/scripts/nginx-pre.sh`
    - Post-script: `/scripts/nginx-post.sh`
 
-2. **test-service** - Serviço de teste que depende do nginx
-   - Dependência: `nginx`
-   - Aguarda 3 segundos após nginx iniciar
+2. **test-service** - Test service that depends on nginx
+   - Dependency: `nginx`
+   - Waits 3 seconds after nginx starts
 
-3. **monitor** - Serviço de monitoramento
-   - Dependência: `test-service` 
-   - Aguarda 2 segundos após test-service iniciar
+3. **monitor** - Monitoring service
+   - Dependency: `test-service` 
+   - Waits 2 seconds after test-service starts
 
-4. **logger** - Serviço de logging independente
-   - Sem dependências
+4. **logger** - Independent logging service
+   - No dependencies
 
-## Como Testar
+## How to Test
 
-### Teste Interativo
+### Interactive Test
 ```bash
 ./test-container.sh
 ```
-- Inicia o container interativamente
-- Pressione `Ctrl+C` para testar o graceful shutdown
-- Nginx estará disponível em `http://localhost:8080`
+- Starts the container interactively
+- Press `Ctrl+C` to test graceful shutdown
+- Nginx will be available at `http://localhost:8080`
 
-### Teste Automatizado
+### Automated Test
 ```bash
 ./test-graceful-shutdown.sh
 ```
-- Executa teste completo automaticamente
-- Verifica se nginx está respondendo
-- Envia SIGTERM para testar graceful shutdown
-- Mostra logs do processo
+- Runs complete test automatically
+- Verifies if nginx is responding
+- Sends SIGTERM to test graceful shutdown
+- Shows process logs
 
-### Teste Manual
+### Manual Test
 
-1. **Construir imagem:**
+1. **Build image:**
    ```bash
    docker build -t go-overlay-test .
    ```
 
-2. **Executar container:**
+2. **Run container:**
    ```bash
    docker run --rm -p 8080:80 --name tm-test go-overlay-test
    ```
 
-3. **Testar nginx (em outro terminal):**
+3. **Test nginx (in another terminal):**
    ```bash
    curl http://localhost:8080
    curl http://localhost:8080/health
    ```
 
-4. **Testar graceful shutdown:**
+4. **Test graceful shutdown:**
    ```bash
    docker kill --signal=SIGTERM tm-test
    ```
 
-## O que Observar
+## What to Observe
 
-Durante o shutdown graceful, você deve ver:
+During graceful shutdown, you should see:
 
-1. **Recebimento do sinal:** Mensagem indicando que SIGTERM foi recebido
-2. **Ordem de parada:** Serviços sendo parados na ordem correta
-3. **Timeouts:** Serviços que não respondem sendo forçadamente terminados após 10s
-4. **Cleanup:** PTYs sendo fechados e recursos liberados
-5. **Finalização:** Mensagem de "Graceful shutdown completed"
+1. **Signal reception:** Message indicating SIGTERM was received
+2. **Stop order:** Services being stopped in the correct order
+3. **Timeouts:** Services that don't respond being force-terminated after 10s
+4. **Cleanup:** PTYs being closed and resources freed
+5. **Finalization:** "Graceful shutdown completed" message
 
-## Estrutura dos Arquivos
+## File Structure
 
-- `Dockerfile` - Configuração do container de teste
-- `services.toml` - Configuração dos serviços
-- `test-container.sh` - Script para teste interativo
-- `test-graceful-shutdown.sh` - Script para teste automatizado
-- `service-manager` - Binário compilado do orquestrador
+- `Dockerfile` - Test container configuration
+- `services.toml` - Services configuration
+- `test-container.sh` - Interactive test script
+- `test-graceful-shutdown.sh` - Automated test script
+- `go-overlay` - Compiled orchestrator binary
 
-## Logs Esperados
+## Expected Logs
 
 ```
 Go Overlay - Version: v0.1.0
@@ -96,7 +96,7 @@ Nginx pre-script completed
 ...
 ```
 
-Durante o shutdown:
+During shutdown:
 ```
 [INFO] Received signal: terminated
 [INFO] Initiating graceful shutdown...
@@ -105,4 +105,4 @@ Durante o shutdown:
 [INFO] Service nginx stopped gracefully
 [INFO] All services stopped gracefully
 [INFO] Graceful shutdown completed
-``` 
+```

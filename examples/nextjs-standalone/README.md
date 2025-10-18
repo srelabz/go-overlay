@@ -86,8 +86,8 @@ RUN apt-get update && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Download go-overlay
-ADD https://github.com/srelabz/go-overlay/releases/latest/download/go-overlay /usr/local/bin/go-overlay
-RUN chmod +x /usr/local/bin/go-overlay
+ADD https://github.com/srelabz/go-overlay/releases/latest/download/go-overlay /go-overlay
+RUN chmod +x /go-overlay
 
 # Copy Next.js standalone build
 COPY .next/standalone/ /app/
@@ -95,7 +95,7 @@ COPY .next/static/ /app/.next/static/
 COPY public/ /app/public/
 
 # Copy config
-COPY services.toml /etc/go-overlay/services.toml
+COPY services.toml /services.toml
 
 WORKDIR /app
 
@@ -104,7 +104,7 @@ ENV PORT=3000
 
 EXPOSE 3000
 
-ENTRYPOINT ["/usr/local/bin/go-overlay", "daemon"]
+ENTRYPOINT ["/go-overlay"]
 ```
 
 ## Multi-Stage Dockerfile (Recommended)
@@ -133,8 +133,8 @@ RUN apt-get update && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Download go-overlay
-ADD https://github.com/srelabz/go-overlay/releases/latest/download/go-overlay /usr/local/bin/go-overlay
-RUN chmod +x /usr/local/bin/go-overlay
+ADD https://github.com/srelabz/go-overlay/releases/latest/download/go-overlay /go-overlay
+RUN chmod +x /go-overlay
 
 # Copy Next.js build from builder
 COPY --from=builder /app/.next/standalone/ /app/
@@ -142,7 +142,7 @@ COPY --from=builder /app/.next/static/ /app/.next/static/
 COPY --from=builder /app/public/ /app/public/
 
 # Copy config
-COPY services.toml /etc/go-overlay/services.toml
+COPY services.toml /services.toml
 
 WORKDIR /app
 
@@ -151,7 +151,7 @@ ENV PORT=3000
 
 EXPOSE 3000
 
-ENTRYPOINT ["/usr/local/bin/go-overlay", "daemon"]
+ENTRYPOINT ["/go-overlay"]
 ```
 
 ## How to Run
