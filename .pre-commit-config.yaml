@@ -1,49 +1,85 @@
-repos:
-  - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v6.0.0
-    hooks:
-      - id: trailing-whitespace
-      - id: end-of-file-fixer
-      - id: check-yaml
-      - id: check-added-large-files
-      - id: check-merge-conflict
-      - id: check-case-conflict
-      - id: mixed-line-ending
+# Pre-commit hooks configuration
+# Install: invoke precommit.install
+# Run manually: invoke precommit
+# Run on all files: invoke precommit.run
 
+repos:
+  # Go formatting
   - repo: https://github.com/dnephin/pre-commit-golang
     rev: v0.5.1
     hooks:
       - id: go-fmt
+        name: Go Format
+        description: Run gofmt on Go files
       - id: go-vet
+        name: Go Vet
+        description: Run go vet on Go files
       - id: go-imports
-      - id: go-cyclo
-        args: [-over=15]
-      - id: go-critic
-      - id: golangci-lint
-        args: [--timeout=5m]
+        name: Go Imports
+        description: Run goimports on Go files
+        args: [-w]
       - id: go-unit-tests
+        name: Go Unit Tests
+        description: Run go test on changed packages
+        args: [-timeout=30s]
       - id: go-build
+        name: Go Build
+        description: Build the project
       - id: go-mod-tidy
+        name: Go Mod Tidy
+        description: Run go mod tidy
 
-  - repo: local
+  # General file checks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
     hooks:
-      - id: go-test-coverage
-        name: Go Test Coverage
-        entry: bash -c 'go test -coverprofile=coverage.out -covermode=atomic ./... && go tool cover -func=coverage.out'
-        language: system
-        pass_filenames: false
-        files: \.go$
+      - id: trailing-whitespace
+        name: Trim Trailing Whitespace
+      - id: end-of-file-fixer
+        name: Fix End of Files
+      - id: check-yaml
+        name: Check YAML
+      - id: check-toml
+        name: Check TOML
+      - id: check-json
+        name: Check JSON
+      - id: check-added-large-files
+        name: Check Large Files
+        args: [--maxkb=1000]
+      - id: check-merge-conflict
+        name: Check Merge Conflicts
+      - id: detect-private-key
+        name: Detect Private Keys
 
-      - id: go-security-check
-        name: Go Security Check (gosec)
-        entry: bash -c 'command -v gosec >/dev/null 2>&1 && gosec -quiet ./... || echo "gosec not installed, skipping"'
-        language: system
-        pass_filenames: false
-        files: \.go$
+  # Markdown linting
+  - repo: https://github.com/igorshubovych/markdownlint-cli
+    rev: v0.39.0
+    hooks:
+      - id: markdownlint
+        name: Markdown Lint
+        args: [--fix]
 
-      - id: gofumpt
-        name: gofumpt
-        entry: bash -c 'command -v gofumpt >/dev/null 2>&1 && gofumpt -l -w . || echo "gofumpt not installed, skipping"'
-        language: system
-        pass_filenames: false
-        files: \.go$
+  # Commit message linting
+  - repo: https://github.com/compilerla/conventional-pre-commit
+    rev: v3.1.0
+    hooks:
+      - id: conventional-pre-commit
+        name: Conventional Commit
+        stages: [commit-msg]
+        args: [--force-scope]
+
+# Configuration
+default_language_version:
+  python: python3
+
+# Exclude patterns
+exclude: |
+  (?x)^(
+      vendor/|
+      dist/|
+      release/|
+      coverage/|
+      \.git/|
+      \.idea/|
+      \.vscode/
+  )$

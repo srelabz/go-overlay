@@ -1,3 +1,5 @@
+// go:build integration
+//go:build integration
 // +build integration
 
 package main
@@ -9,9 +11,20 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/pelletier/go-toml/v2"
 )
+
+// Integration test helper: create a temporary TOML config file
+func createTempConfig(t *testing.T, content string) string {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "services.toml")
+
+	err := os.WriteFile(configPath, []byte(content), 0o644)
+	if err != nil {
+		t.Fatalf("Failed to create temp config: %v", err)
+	}
+
+	return configPath
+}
 
 // Integration test for loading and validating a complete config
 func TestIntegrationLoadValidConfig(t *testing.T) {
@@ -45,10 +58,13 @@ wait_after = 2
 	}
 	defer file.Close()
 
-	var config Config
-	decoder := toml.NewDecoder(file)
-	if err := decoder.Decode(&config); err != nil {
+	config, err := parseConfig(file)
+	if err != nil {
 		t.Fatalf("Failed to decode config: %v", err)
+	}
+
+	for _, s := range config.Services {
+		t.Logf("svc %q deps=%v", s.Name, s.DependsOn)
 	}
 
 	if err := validateConfig(&config); err != nil {
@@ -92,10 +108,7 @@ command = "/bin/sleep"
 args = ["30"]
 enabled = true
 depends_on = ["database", "cache"]
-
-[services.wait_after]
-database = 5
-cache = 3
+wait_after = { database = 5, cache = 3 }
 
 [[services]]
 name = "frontend"
@@ -114,18 +127,19 @@ wait_after = 2
 	}
 	defer file.Close()
 
-	var config Config
-	decoder := toml.NewDecoder(file)
-	if err := decoder.Decode(&config); err != nil {
+	config, err := parseConfig(file)
+	if err != nil {
 		t.Fatalf("Failed to decode config: %v", err)
 	}
 
-	if err := validateConfig(&config); err != nil {
-		t.Errorf("validateConfig() failed: %v", err)
+	// Verify API service has correct dependencies before validation
+	var apiService Service
+	for _, s := range config.Services {
+		if s.Name == "api" {
+			apiService = s
+			break
+		}
 	}
-
-	// Verify API service has correct dependencies
-	apiService := config.Services[2]
 	if len(apiService.DependsOn) != 2 {
 		t.Errorf("API service dependencies = %v, want 2", len(apiService.DependsOn))
 	}
@@ -137,6 +151,10 @@ wait_after = 2
 
 	if apiService.WaitAfter.GetWaitTime("database") != 5 {
 		t.Errorf("Wait time for database = %v, want 5", apiService.WaitAfter.GetWaitTime("database"))
+	}
+
+	if err := validateConfig(&config); err != nil {
+		t.Errorf("validateConfig() failed: %v", err)
 	}
 }
 
@@ -206,9 +224,8 @@ command = "/bin/echo"
 			}
 			defer file.Close()
 
-			var config Config
-			decoder := toml.NewDecoder(file)
-			if err := decoder.Decode(&config); err != nil {
+			config, err := parseConfig(file)
+			if err != nil {
 				if !tt.shouldFail {
 					t.Fatalf("Failed to decode config: %v", err)
 				}
@@ -283,7 +300,7 @@ func TestIntegrationPreScript(t *testing.T) {
 
 	// Create a pre-script that creates a marker file
 	scriptContent := "#!/bin/sh\necho 'pre-script executed' > " + markerPath + "\n"
-	err := os.WriteFile(scriptPath, []byte(scriptContent), 0755)
+	err := os.WriteFile(scriptPath, []byte(scriptContent), 0o755)
 	if err != nil {
 		t.Fatalf("Failed to create pre-script: %v", err)
 	}
@@ -414,7 +431,7 @@ func TestIntegrationLogFileService(t *testing.T) {
 	logFile := filepath.Join(tmpDir, "service.log")
 
 	// Create log directory
-	err := os.MkdirAll(tmpDir, 0755)
+	err := os.MkdirAll(tmpDir, 0o755)
 	if err != nil {
 		t.Fatalf("Failed to create log directory: %v", err)
 	}
@@ -521,15 +538,14 @@ depends_on = "service1"
 
 	tmpDir := b.TempDir()
 	configPath := filepath.Join(tmpDir, "services.toml")
-	os.WriteFile(configPath, []byte(configContent), 0644)
+	os.WriteFile(configPath, []byte(configContent), 0o644)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		file, _ := os.Open(configPath)
-		var config Config
-		decoder := toml.NewDecoder(file)
-		decoder.Decode(&config)
-		validateConfig(&config)
+		var cfg Config
+		cfg, _ = parseConfig(file)
+		validateConfig(&cfg)
 		file.Close()
 	}
 }

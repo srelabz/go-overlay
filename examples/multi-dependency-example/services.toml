@@ -34,8 +34,11 @@ args = [
 enabled = true
 required = true
 depends_on = ["redis", "postgres"]
-wait_after = { redis = 2, postgres = 5 }
 user = "appuser"
+
+[services.wait_after]
+redis = 2
+postgres = 5
 
 # Celery worker (depends only on Redis)
 [[services]]
@@ -50,8 +53,10 @@ args = [
 enabled = true
 required = false
 depends_on = ["redis"]
-wait_after = { redis = 2 }
 user = "appuser"
+
+[services.wait_after]
+redis = 2
 
 # Celery beat scheduler (depends only on Redis)
 [[services]]
@@ -65,8 +70,13 @@ args = [
 enabled = true
 required = false
 depends_on = ["redis"]
-wait_after = 2  # Can also use a simple integer for all dependencies
 user = "appuser"
+
+[services.wait_after]
+redis = 2
+web = 5
+celery-worker = 2
+celery-beat = 2
 
 # Monitoring service (depends on all other services)
 [[services]]

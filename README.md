@@ -160,6 +160,24 @@ All examples include:
 
 This project uses `invoke` with `mise` for task management.
 
+### Quick Start Development
+
+```bash
+# Install development tools
+invoke tools
+
+# Before committing (fast check - 20s)
+invoke precommit.precommit-fast
+
+# Before pushing to remote (complete check - 60s)
+invoke precommit.precommit
+
+# Just format code (2s)
+invoke quality.fmt
+```
+
+### Common Tasks
+
 ```bash
 mise exec -- invoke --list         # Lists all available tasks
 mise exec -- invoke go.build       # Compiles the Go binary for your local OS

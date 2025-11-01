@@ -46,7 +46,9 @@ command = "/bin/sleep"
 args = ["300"]
 enabled = true
 depends_on = ["base-service"]
-wait_after = { base-service = 4 }
+
+[services.wait_after]
+base-service = 4
 
 # ============================================================================
 # VARIATION 5: Multiple dependencies with global wait
@@ -68,7 +70,11 @@ command = "/bin/sleep"
 args = ["300"]
 enabled = true
 depends_on = ["base-service", "service-old-style", "service-array-single"]
-wait_after = { base-service = 1, service-old-style = 2, service-array-single = 3 }
+
+[services.wait_after]
+base-service = 1
+service-old-style = 2
+service-array-single = 3
 
 # ============================================================================
 # VARIATION 7: Three dependencies with different wait times
@@ -79,7 +85,11 @@ command = "/bin/sleep"
 args = ["300"]
 enabled = true
 depends_on = ["service-multi-global", "service-multi-perdep", "service-array-single-map"]
-wait_after = { service-multi-global = 5, service-multi-perdep = 10, service-array-single-map = 2 }
+
+[services.wait_after]
+service-multi-global = 5
+service-multi-perdep = 10
+service-array-single-map = 2
 
 # ============================================================================
 # VARIATION 8: No wait_after specified (defaults to 0)

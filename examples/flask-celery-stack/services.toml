@@ -26,8 +26,10 @@ args = [
 enabled = true
 required = true
 depends_on = ["redis"]
-wait_after = { redis = 2 }
 user = "appuser"
+
+[services.wait_after]
+redis = 2
 
 # Celery worker
 [[services]]
@@ -42,8 +44,10 @@ args = [
 enabled = true
 required = false
 depends_on = ["redis"]
-wait_after = { redis = 2 }
 user = "appuser"
+
+[services.wait_after]
+redis = 2
 
 # Celery beat scheduler
 [[services]]
@@ -57,5 +61,7 @@ args = [
 enabled = true
 required = false
 depends_on = ["redis"]
-wait_after = { redis = 2 }
 user = "appuser"
+
+[services.wait_after]
+redis = 2

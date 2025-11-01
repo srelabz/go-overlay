@@ -1,8 +1,9 @@
 package main
 
 import (
+	"errors"
 	"os"
-	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -371,7 +372,7 @@ func TestValidateDependencies(t *testing.T) {
 					Name:      "service2",
 					Command:   "/bin/echo",
 					DependsOn: []string{"service1"},
-					WaitAfter: WaitAfterField{
+					WaitAfter: &WaitAfterField{
 						PerDep:   map[string]int{"service1": 5},
 						IsPerDep: true,
 					},
@@ -387,7 +388,7 @@ func TestValidateDependencies(t *testing.T) {
 					Name:      "service2",
 					Command:   "/bin/echo",
 					DependsOn: []string{"service1"},
-					WaitAfter: WaitAfterField{
+					WaitAfter: &WaitAfterField{
 						PerDep:   map[string]int{"nonexistent": 5},
 						IsPerDep: true,
 					},
@@ -415,10 +416,10 @@ func TestValidateDependencies(t *testing.T) {
 // Test hasCycles
 func TestHasCycles(t *testing.T) {
 	tests := []struct {
-		name         string
-		serviceName  string
-		serviceMap   map[string]Service
-		hasCycle     bool
+		name        string
+		serviceName string
+		serviceMap  map[string]Service
+		hasCycle    bool
 	}{
 		{
 			name:        "No cycle",
@@ -627,23 +628,10 @@ func TestServiceProcessSetGetState(t *testing.T) {
 }
 
 // Test isBashAvailable
-func TestIsBashAvailable(t *testing.T) {
+func TestIsBashAvailable(_ *testing.T) {
 	// This test is environment-dependent
 	// Just ensure it doesn't panic
 	_ = isBashAvailable()
-}
-
-// Integration test helper: create a temporary TOML config file
-func createTempConfig(t *testing.T, content string) string {
-	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, "services.toml")
-
-	err := os.WriteFile(configPath, []byte(content), 0644)
-	if err != nil {
-		t.Fatalf("Failed to create temp config: %v", err)
-	}
-
-	return configPath
 }
 
 // Test validateConfig with default timeouts
@@ -721,9 +709,12 @@ func TestServiceProcessSetError(t *testing.T) {
 
 	// Test setting error
 	testErr := os.ErrNotExist
+
+	// Note: SetError() will print an error message to stdout
+	// This is expected behavior and not a test failure
 	sp.SetError(testErr)
 
-	if sp.LastError != testErr {
+	if !errors.Is(sp.LastError, testErr) {
 		t.Errorf("LastError = %v, want %v", sp.LastError, testErr)
 	}
 
@@ -736,6 +727,133 @@ func TestServiceProcessSetError(t *testing.T) {
 func TestVersionSet(t *testing.T) {
 	if version == "" {
 		t.Error("version should not be empty")
+	}
+}
+
+// Test parseConfig with various TOML formats
+func TestParseConfig(t *testing.T) {
+	tests := []struct {
+		name      string
+		toml      string
+		shouldErr bool
+		validate  func(*testing.T, Config)
+	}{
+		{
+			name: "Simple config",
+			toml: `
+[[services]]
+name = "test"
+command = "/bin/echo"
+`,
+			shouldErr: false,
+			validate: func(t *testing.T, c Config) {
+				if len(c.Services) != 1 {
+					t.Errorf("Expected 1 service, got %d", len(c.Services))
+				}
+			},
+		},
+		{
+			name: "Config with depends_on as string",
+			toml: `
+[[services]]
+name = "svc1"
+command = "/bin/echo"
+
+[[services]]
+name = "svc2"
+command = "/bin/echo"
+depends_on = "svc1"
+`,
+			shouldErr: false,
+			validate: func(t *testing.T, c Config) {
+				if len(c.Services[1].DependsOn) != 1 {
+					t.Errorf("Expected 1 dependency, got %d", len(c.Services[1].DependsOn))
+				}
+			},
+		},
+		{
+			name: "Config with depends_on as array",
+			toml: `
+[[services]]
+name = "svc1"
+command = "/bin/echo"
+depends_on = ["svc2", "svc3"]
+`,
+			shouldErr: false,
+			validate: func(t *testing.T, c Config) {
+				if len(c.Services[0].DependsOn) != 2 {
+					t.Errorf("Expected 2 dependencies, got %d", len(c.Services[0].DependsOn))
+				}
+			},
+		},
+		{
+			name: "Config with wait_after as int",
+			toml: `
+[[services]]
+name = "svc1"
+command = "/bin/echo"
+wait_after = 5
+`,
+			shouldErr: false,
+			validate: func(t *testing.T, c Config) {
+				if c.Services[0].WaitAfter == nil || c.Services[0].WaitAfter.Global != 5 {
+					t.Error("Expected wait_after global = 5")
+				}
+			},
+		},
+		{
+			name: "Config with wait_after as map",
+			toml: `
+[[services]]
+name = "svc1"
+command = "/bin/echo"
+wait_after = { dep1 = 10, dep2 = 20 }
+`,
+			shouldErr: false,
+			validate: func(t *testing.T, c Config) {
+				if c.Services[0].WaitAfter == nil || !c.Services[0].WaitAfter.IsPerDep {
+					t.Error("Expected wait_after to be per-dep")
+				}
+			},
+		},
+		{
+			name: "Config with wait_after as sub-table",
+			toml: `
+[[services]]
+name = "svc1"
+command = "/bin/echo"
+
+[services.wait_after]
+dep1 = 10
+dep2 = 20
+`,
+			shouldErr: false,
+			validate: func(t *testing.T, c Config) {
+				if c.Services[0].WaitAfter == nil || !c.Services[0].WaitAfter.IsPerDep {
+					t.Error("Expected wait_after to be per-dep from sub-table")
+				}
+				if c.Services[0].WaitAfter.GetWaitTime("dep1") != 10 {
+					t.Errorf("Expected wait time for dep1 = 10, got %d", c.Services[0].WaitAfter.GetWaitTime("dep1"))
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config, err := parseConfig(strings.NewReader(tt.toml))
+
+			if tt.shouldErr && err == nil {
+				t.Error("Expected error but got none")
+			}
+			if !tt.shouldErr && err != nil {
+				t.Errorf("Unexpected error: %v", err)
+			}
+
+			if !tt.shouldErr && tt.validate != nil {
+				tt.validate(t, config)
+			}
+		})
 	}
 }
 
@@ -757,6 +875,9 @@ func TestIPCStructures(t *testing.T) {
 	if cmd.Type != CmdListServices {
 		t.Errorf("IPCCommand.Type = %v, want %v", cmd.Type, CmdListServices)
 	}
+	if cmd.ServiceName != "test-service" {
+		t.Errorf("IPCCommand.ServiceName = %v, want %v", cmd.ServiceName, "test-service")
+	}
 
 	// Test ServiceInfo
 	info := ServiceInfo{
@@ -773,11 +894,68 @@ func TestIPCStructures(t *testing.T) {
 
 	// Test IPCResponse
 	resp := IPCResponse{
-		Success: true,
-		Message: "OK",
+		Success:  true,
+		Message:  "OK",
 		Services: []ServiceInfo{info},
 	}
 	if !resp.Success {
 		t.Error("IPCResponse.Success should be true")
+	}
+	if resp.Message != "OK" {
+		t.Errorf("IPCResponse.Message = %v, want %v", resp.Message, "OK")
+	}
+	if len(resp.Services) != 1 {
+		t.Errorf("IPCResponse.Services length = %v, want %v", len(resp.Services), 1)
+	}
+}
+
+// Test ValidationErrors
+func TestValidationErrors(t *testing.T) {
+	tests := []struct {
+		name     string
+		errors   ValidationErrors
+		expected string
+	}{
+		{
+			name:     "Empty errors",
+			errors:   ValidationErrors{},
+			expected: "no validation errors",
+		},
+		{
+			name: "Single error",
+			errors: ValidationErrors{
+				{Field: "name", Service: "test", Message: "required"},
+			},
+			expected: "validation error in service 'test', field 'name': required",
+		},
+		{
+			name: "Multiple errors",
+			errors: ValidationErrors{
+				{Field: "name", Message: "required"},
+				{Field: "command", Service: "svc", Message: "not found"},
+			},
+			expected: "validation error in field 'name': required; validation error in service 'svc', field 'command': not found",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.errors.Error(); got != tt.expected {
+				t.Errorf("ValidationErrors.Error() = %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}
+
+// Test CommandType constants
+func TestCommandTypeConstants(t *testing.T) {
+	if CmdListServices != "list_services" {
+		t.Errorf("CmdListServices = %v, want list_services", CmdListServices)
+	}
+	if CmdRestartService != "restart_service" {
+		t.Errorf("CmdRestartService = %v, want restart_service", CmdRestartService)
+	}
+	if CmdGetStatus != "get_status" {
+		t.Errorf("CmdGetStatus = %v, want get_status", CmdGetStatus)
 	}
 }
