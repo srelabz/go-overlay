@@ -131,9 +131,36 @@ def clean(c):
 
 @task
 def test(c):
-    """Run tests."""
-    print("Running tests...")
-    _run(c, f"{GO_ENV['GOTEST']} -v ./...")
+    """Run unit tests."""
+    print("Running unit tests...")
+    _run(c, f"{GO_ENV['GOTEST']} -v -timeout 30s ./...")
+
+
+@task
+def test_integration(c):
+    """Run integration tests."""
+    print("Running integration tests...")
+    _run(c, f"{GO_ENV['GOTEST']} -v -timeout 2m -tags=integration ./...")
+
+
+@task
+def test_coverage(c):
+    """Run tests with coverage report."""
+    print("Running tests with coverage...")
+    coverage_dir = Path("coverage")
+    coverage_dir.mkdir(parents=True, exist_ok=True)
+
+    _run(c, f"{GO_ENV['GOTEST']} -coverprofile=coverage/coverage.out -covermode=atomic ./...")
+    _run(c, "go tool cover -html=coverage/coverage.out -o coverage/coverage.html")
+    _run(c, "go tool cover -func=coverage/coverage.out")
+    print(f"\n✅ Coverage report generated: coverage/coverage.html")
+
+
+@task
+def test_bench(c):
+    """Run benchmark tests."""
+    print("Running benchmark tests...")
+    _run(c, f"{GO_ENV['GOTEST']} -bench=. -benchmem -run=^# ./...")
 
 
 @task
@@ -141,6 +168,123 @@ def deps(c):
     """Install Go dependencies."""
     print("Installing dependencies...")
     _run(c, f"{GO_ENV['GOGET']} -v ./...")
+
+
+# =============================================================================
+# Code Quality Tasks
+# =============================================================================
+@task
+def lint(c):
+    """Run golangci-lint."""
+    print("Running golangci-lint...")
+    # Check if golangci-lint is installed
+    result = c.run("command -v golangci-lint", warn=True, hide=True)
+    if result.ok:
+        _run(c, "golangci-lint run --timeout 5m")
+        print("✅ Linting passed")
+    else:
+        print("⚠️  golangci-lint not installed. Install with:")
+        print("    curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin")
+        sys.exit(1)
+
+
+@task
+def fmt(c):
+    """Format Go code."""
+    print("Formatting code...")
+    _run(c, "gofmt -s -w .")
+
+    # Try gofumpt if available
+    result = c.run("command -v gofumpt", warn=True, hide=True)
+    if result.ok:
+        _run(c, "gofumpt -l -w .")
+
+    # Try goimports if available
+    result = c.run("command -v goimports", warn=True, hide=True)
+    if result.ok:
+        _run(c, "goimports -w .")
+
+    print("✅ Code formatted")
+
+
+@task
+def vet(c):
+    """Run go vet."""
+    print("Running go vet...")
+    _run(c, "go vet ./...")
+    print("✅ go vet passed")
+
+
+@task
+def check(c):
+    """Run all checks: fmt, vet, lint, test."""
+    print("\n" + "=" * 60)
+    print("🔍 RUNNING ALL CHECKS")
+    print("=" * 60 + "\n")
+
+    fmt(c)
+    print()
+    vet(c)
+    print()
+    lint(c)
+    print()
+    test(c)
+
+    print("\n✅ All checks passed!")
+
+
+# =============================================================================
+# Pre-commit Tasks
+# =============================================================================
+@task
+def precommit_install(c):
+    """Install pre-commit hooks."""
+    print("Installing pre-commit hooks...")
+    result = c.run("command -v pre-commit", warn=True, hide=True)
+    if result.ok:
+        _run(c, "pre-commit install")
+        _run(c, "pre-commit install --hook-type commit-msg")
+        print("✅ Pre-commit hooks installed")
+    else:
+        print("⚠️  pre-commit not installed. Install with:")
+        print("    pip install pre-commit")
+        sys.exit(1)
+
+
+@task
+def precommit_run(c):
+    """Run pre-commit hooks on all files."""
+    print("Running pre-commit hooks...")
+    result = c.run("command -v pre-commit", warn=True, hide=True)
+    if result.ok:
+        _run(c, "pre-commit run --all-files")
+    else:
+        print("⚠️  pre-commit not installed")
+        sys.exit(1)
+
+
+@task
+def tools(c):
+    """Install development tools."""
+    print("Installing development tools...")
+
+    print("\n📦 Installing golangci-lint...")
+    c.run("go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest", pty=True)
+
+    print("\n📦 Installing gosec...")
+    c.run("go install github.com/securego/gosec/v2/cmd/gosec@latest", pty=True)
+
+    print("\n📦 Installing gofumpt...")
+    c.run("go install mvdan.cc/gofumpt@latest", pty=True)
+
+    print("\n📦 Installing goimports...")
+    c.run("go install golang.org/x/tools/cmd/goimports@latest", pty=True)
+
+    print("\n📦 Installing staticcheck...")
+    c.run("go install honnef.co/go/tools/cmd/staticcheck@latest", pty=True)
+
+    print("\n✅ All development tools installed!")
+    print("\nRun 'invoke tools.list' to see available commands")
 
 
 # =============================================================================
@@ -525,7 +669,7 @@ def test_cli(c):
 
 @task
 def ci_test(c):
-    """Run all tests (unit + integration)."""
+    """Run all tests (unit + integration + coverage)."""
     print("\n" + "=" * 60)
     print("🧪 STAGE 1/4: RUNNING TESTS")
     print("=" * 60 + "\n")
@@ -535,6 +679,12 @@ def ci_test(c):
 
     print("\n🔬 Running unit tests...")
     test(c)
+
+    print("\n🧩 Running integration tests...")
+    test_integration(c)
+
+    print("\n📊 Generating coverage report...")
+    test_coverage(c)
 
     print("\n✅ All tests passed!")
 
@@ -692,6 +842,29 @@ def ci_quick(c):
 # Main Namespace Configuration
 # =============================================================================
 go_coll = Collection("go", build, build_linux, clean, test, deps)
+
+test_coll = Collection(
+    "test",
+    test,
+    test_integration,
+    test_coverage,
+    test_bench,
+)
+
+quality_coll = Collection(
+    "quality",
+    lint,
+    fmt,
+    vet,
+    check,
+)
+
+precommit_coll = Collection(
+    "precommit",
+    precommit_install,
+    precommit_run,
+)
+
 docker_coll = Collection(
     "docker", docker_build, docker_release, docker_run, docker_stop, docker_logs
 )
@@ -709,6 +882,9 @@ cd_coll = Collection("cd", cd_release)
 
 ns = Collection(
     go_coll,
+    test_coll,
+    quality_coll,
+    precommit_coll,
     docker_coll,
     release_coll,
     security_coll,
@@ -717,4 +893,5 @@ ns = Collection(
     install,
     uninstall,
     test_cli,
+    tools,
 )

@@ -1,0 +1,104 @@
+# Syntax Variations Example
+# This file demonstrates all possible syntax variations for depends_on and wait_after
+
+[timeouts]
+service_shutdown_timeout = 15
+global_shutdown_timeout = 45
+
+# ============================================================================
+# VARIATION 1: No dependencies (base service)
+# ============================================================================
+[[services]]
+name = "base-service"
+command = "/bin/sleep"
+args = ["300"]
+enabled = true
+required = true
+
+# ============================================================================
+# VARIATION 2: Single dependency with global wait (OLD STYLE - STILL WORKS)
+# ============================================================================
+[[services]]
+name = "service-old-style"
+command = "/bin/sleep"
+args = ["300"]
+enabled = true
+depends_on = "base-service"
+wait_after = 2
+
+# ============================================================================
+# VARIATION 3: Single dependency as array with global wait
+# ============================================================================
+[[services]]
+name = "service-array-single"
+command = "/bin/sleep"
+args = ["300"]
+enabled = true
+depends_on = ["base-service"]
+wait_after = 3
+
+# ============================================================================
+# VARIATION 4: Single dependency as array with map wait
+# ============================================================================
+[[services]]
+name = "service-array-single-map"
+command = "/bin/sleep"
+args = ["300"]
+enabled = true
+depends_on = ["base-service"]
+wait_after = { base-service = 4 }
+
+# ============================================================================
+# VARIATION 5: Multiple dependencies with global wait
+# ============================================================================
+[[services]]
+name = "service-multi-global"
+command = "/bin/sleep"
+args = ["300"]
+enabled = true
+depends_on = ["base-service", "service-old-style"]
+wait_after = 5
+
+# ============================================================================
+# VARIATION 6: Multiple dependencies with per-dependency wait
+# ============================================================================
+[[services]]
+name = "service-multi-perdep"
+command = "/bin/sleep"
+args = ["300"]
+enabled = true
+depends_on = ["base-service", "service-old-style", "service-array-single"]
+wait_after = { base-service = 1, service-old-style = 2, service-array-single = 3 }
+
+# ============================================================================
+# VARIATION 7: Three dependencies with different wait times
+# ============================================================================
+[[services]]
+name = "service-complex"
+command = "/bin/sleep"
+args = ["300"]
+enabled = true
+depends_on = ["service-multi-global", "service-multi-perdep", "service-array-single-map"]
+wait_after = { service-multi-global = 5, service-multi-perdep = 10, service-array-single-map = 2 }
+
+# ============================================================================
+# VARIATION 8: No wait_after specified (defaults to 0)
+# ============================================================================
+[[services]]
+name = "service-no-wait"
+command = "/bin/sleep"
+args = ["300"]
+enabled = true
+depends_on = ["base-service"]
+# wait_after is optional - defaults to 0 (no wait)
+
+# ============================================================================
+# VARIATION 9: Single dependency in old format without wait_after
+# ============================================================================
+[[services]]
+name = "service-old-no-wait"
+command = "/bin/sleep"
+args = ["300"]
+enabled = true
+depends_on = "base-service"
+# wait_after is optional

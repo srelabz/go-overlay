@@ -161,26 +161,26 @@ All examples include:
 This project uses `invoke` with `mise` for task management.
 
 ```bash
-mise exec -- invoke --list         # Lista todas as tasks disponíveis
-mise exec -- invoke go.build       # Compila o binário Go para seu SO local
-mise exec -- invoke install        # Instala o binário (faça uninstall com a próxima linha)
-mise exec -- invoke uninstall      # Desinstala o binário instalado
-mise exec -- invoke docker.build   # Constrói a imagem Docker
-mise exec -- invoke go.test        # Roda os testes
+mise exec -- invoke --list         # Lists all available tasks
+mise exec -- invoke go.build       # Compiles the Go binary for your local OS
+mise exec -- invoke install        # Installs the binary (uninstall with the next line)
+mise exec -- invoke uninstall      # Uninstalls the installed binary
+mise exec -- invoke docker.build   # Builds the Docker image
+mise exec -- invoke go.test        # Runs the tests
 ```
 
 ## 🚀 CI/CD Pipeline
 
-Este projeto possui um pipeline completo de CI/CD com testes automatizados, verificações de segurança e processo de release.
+This project has a complete CI/CD pipeline with automated tests, security checks, and a release process.
 
-### Comandos Rápidos
+### Quick Commands
 
 ```bash
-mise run ci          # Pipeline CI completo (testes + segurança + build)
-mise run ci:quick    # Pipeline rápido (pula scans de segurança)
-mise run cd          # Pipeline CD (release)
-mise run ci:test     # Apenas testes
-mise run ci:security # Apenas segurança
+mise run ci          # Full CI pipeline (tests + security + build)
+mise run ci:quick    # Quick pipeline (skips security scans)
+mise run cd          # CD Pipeline (release)
+mise run ci:test     # Tests only
+mise run ci:security # Security only
 ```
 
 ### Pipeline Structure

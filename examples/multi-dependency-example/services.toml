@@ -1,0 +1,79 @@
+# Example demonstrating multiple dependencies support
+# This example shows a typical web application stack with Redis
+
+[timeouts]
+service_shutdown_timeout = 15
+global_shutdown_timeout = 45
+
+# Redis (used by Celery and Web)
+[[services]]
+name = "redis"
+command = "/usr/bin/redis-server"
+args = ["--bind", "127.0.0.1"]
+enabled = true
+required = true
+
+# PostgreSQL database
+[[services]]
+name = "postgres"
+command = "/usr/bin/postgres"
+args = ["-D", "/var/lib/postgresql/data"]
+enabled = true
+required = true
+
+# Flask web application (depends on both Redis and PostgreSQL)
+[[services]]
+name = "web"
+command = "/usr/local/bin/gunicorn"
+args = [
+    "--bind", "0.0.0.0:8000",
+    "--workers", "4",
+    "--timeout", "60",
+    "app:app"
+]
+enabled = true
+required = true
+depends_on = ["redis", "postgres"]
+wait_after = { redis = 2, postgres = 5 }
+user = "appuser"
+
+# Celery worker (depends only on Redis)
+[[services]]
+name = "celery-worker"
+command = "/usr/local/bin/celery"
+args = [
+    "-A", "app.celery",
+    "worker",
+    "--loglevel=info",
+    "--concurrency=2"
+]
+enabled = true
+required = false
+depends_on = ["redis"]
+wait_after = { redis = 2 }
+user = "appuser"
+
+# Celery beat scheduler (depends only on Redis)
+[[services]]
+name = "celery-beat"
+command = "/usr/local/bin/celery"
+args = [
+    "-A", "app.celery",
+    "beat",
+    "--loglevel=info"
+]
+enabled = true
+required = false
+depends_on = ["redis"]
+wait_after = 2  # Can also use a simple integer for all dependencies
+user = "appuser"
+
+# Monitoring service (depends on all other services)
+[[services]]
+name = "monitoring"
+command = "/usr/local/bin/monitoring-agent"
+args = ["--config", "/etc/monitoring/config.yml"]
+enabled = true
+required = false
+depends_on = ["web", "celery-worker", "celery-beat"]
+wait_after = 5  # Global wait time for all dependencies

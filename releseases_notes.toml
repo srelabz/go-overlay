@@ -1,3 +1,30 @@
+[releases.v0-1-2]
+title = "Multi-Dependencies Support"
+body = """
+- **NEW**: Support for multiple dependencies per service
+- **NEW**: depends_on now accepts both string and array of strings
+- **NEW**: wait_after supports both integer and per-dependency map
+- **NEW**: Enhanced dependency validation with better error messages
+- **IMPROVED**: Circular dependency detection for multiple dependencies
+- **DOCS**: Added comprehensive documentation in docs/MULTI-DEPENDENCIES.md
+- **EXAMPLES**: Added flask-celery-stack and multi-dependency-example
+- **BACKWARD COMPATIBLE**: Old configuration format still fully supported
+
+### Migration Examples
+
+#### Single dependency (old style - still works):
+```toml
+depends_on = "redis"
+wait_after = 2
+```
+
+#### Multiple dependencies (new style):
+```toml
+depends_on = ["redis", "postgres"]
+wait_after = { redis = 2, postgres = 5 }
+```
+"""
+
 [releases.v0-1-1]
 title = "Initial stable release"
 body = """

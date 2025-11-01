@@ -1,0 +1,49 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-added-large-files
+      - id: check-merge-conflict
+      - id: check-case-conflict
+      - id: mixed-line-ending
+
+  - repo: https://github.com/dnephin/pre-commit-golang
+    rev: v0.5.1
+    hooks:
+      - id: go-fmt
+      - id: go-vet
+      - id: go-imports
+      - id: go-cyclo
+        args: [-over=15]
+      - id: go-critic
+      - id: golangci-lint
+        args: [--timeout=5m]
+      - id: go-unit-tests
+      - id: go-build
+      - id: go-mod-tidy
+
+  - repo: local
+    hooks:
+      - id: go-test-coverage
+        name: Go Test Coverage
+        entry: bash -c 'go test -coverprofile=coverage.out -covermode=atomic ./... && go tool cover -func=coverage.out'
+        language: system
+        pass_filenames: false
+        files: \.go$
+
+      - id: go-security-check
+        name: Go Security Check (gosec)
+        entry: bash -c 'command -v gosec >/dev/null 2>&1 && gosec -quiet ./... || echo "gosec not installed, skipping"'
+        language: system
+        pass_filenames: false
+        files: \.go$
+
+      - id: gofumpt
+        name: gofumpt
+        entry: bash -c 'command -v gofumpt >/dev/null 2>&1 && gofumpt -l -w . || echo "gofumpt not installed, skipping"'
+        language: system
+        pass_filenames: false
+        files: \.go$

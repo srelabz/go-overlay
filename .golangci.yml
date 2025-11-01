@@ -1,0 +1,156 @@
+run:
+  timeout: 5m
+  tests: true
+  modules-download-mode: readonly
+  allow-parallel-runners: true
+
+output:
+  format: colored-line-number
+  print-issued-lines: true
+  print-linter-name: true
+
+linters:
+  enable:
+    - errcheck      # Check for unchecked errors
+    - gosimple      # Simplify code
+    - govet         # Reports suspicious constructs
+    - ineffassign   # Detects ineffectual assignments
+    - staticcheck   # Static analysis
+    - unused        # Checks for unused code
+    - typecheck     # Type checks
+    - gofmt         # Check code formatting
+    - goimports     # Check import formatting
+    - misspell      # Check for misspelled words
+    - gocritic      # Go code critic
+    - gocyclo       # Check cyclomatic complexity
+    - dupl          # Check for duplicate code
+    - gosec         # Security checks
+    - unconvert     # Remove unnecessary type conversions
+    - unparam       # Reports unused function parameters
+    - bodyclose     # Check HTTP response body close
+    - prealloc      # Find slice declarations that could be preallocated
+    - exportloopref # Check for pointer references to loop variables
+    - nilerr        # Check for incorrect nil error returns
+    - errorlint     # Check for error wrapping
+    - revive        # Fast, configurable, extensible linter
+    - stylecheck    # Stylecheck is a replacement for golint
+
+  disable:
+    - deadcode      # Deprecated
+    - varcheck      # Deprecated
+    - structcheck   # Deprecated
+    - exhaustivestruct # Too strict
+    - interfacer    # Deprecated
+    - maligned      # Deprecated
+    - scopelint     # Deprecated
+    - golint        # Deprecated
+
+linters-settings:
+  errcheck:
+    check-type-assertions: true
+    check-blank: true
+
+  govet:
+    check-shadowing: true
+    enable-all: true
+
+  gocyclo:
+    min-complexity: 15
+
+  dupl:
+    threshold: 100
+
+  gocritic:
+    enabled-tags:
+      - diagnostic
+      - experimental
+      - opinionated
+      - performance
+      - style
+    disabled-checks:
+      - dupImport
+      - ifElseChain
+      - octalLiteral
+      - whyNoLint
+      - wrapperFunc
+
+  gofmt:
+    simplify: true
+
+  goimports:
+    local-prefixes: github.com/yourusername/go-overlay
+
+  misspell:
+    locale: US
+
+  revive:
+    confidence: 0.8
+    rules:
+      - name: blank-imports
+      - name: context-as-argument
+      - name: context-keys-type
+      - name: dot-imports
+      - name: error-return
+      - name: error-strings
+      - name: error-naming
+      - name: exported
+      - name: if-return
+      - name: increment-decrement
+      - name: var-naming
+      - name: var-declaration
+      - name: package-comments
+      - name: range
+      - name: receiver-naming
+      - name: time-naming
+      - name: unexported-return
+      - name: indent-error-flow
+      - name: errorf
+      - name: empty-block
+      - name: superfluous-else
+      - name: unused-parameter
+      - name: unreachable-code
+      - name: redefines-builtin-id
+
+  stylecheck:
+    checks: ["all", "-ST1000", "-ST1003"]
+
+  gosec:
+    excludes:
+      - G204  # Subprocess launched with variable
+      - G304  # File path provided as taint input
+
+issues:
+  exclude-use-default: false
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+  exclude-rules:
+    # Exclude some linters from running on tests files
+    - path: _test\.go
+      linters:
+        - gocyclo
+        - errcheck
+        - dupl
+        - gosec
+        - gocritic
+
+    # Exclude known linters from partially hard-vendored code
+    - path: vendor/
+      linters:
+        - all
+
+    # Ignore shadowing of err
+    - linters:
+        - govet
+      text: 'shadow: declaration of "err" shadows declaration'
+
+    # Ignore long lines with go:generate
+    - linters:
+        - lll
+      source: "^//go:generate "
+
+  # Show all issues from all linters
+  exclude:
+    - "Error return value of .((os\\.)?std(out|err)\\..*|.*Close|.*Flush|os\\.Remove(All)?|.*printf?|os\\.(Un)?Setenv). is not checked"
+    - "exported (type|method|function) (.+) should have comment or be unexported"
+    - "ST1000: at least one file in a package should have a package comment"

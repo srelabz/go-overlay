@@ -1,0 +1,61 @@
+# Flask + Celery Stack Example
+# This matches the user's requested configuration format
+
+[timeouts]
+service_shutdown_timeout = 15
+global_shutdown_timeout = 45
+
+# Redis (used by Celery)
+[[services]]
+name = "redis"
+command = "/usr/bin/redis-server"
+args = ["--bind", "127.0.0.1"]
+enabled = true
+required = true
+
+# Flask web application
+[[services]]
+name = "web"
+command = "/usr/local/bin/gunicorn"
+args = [
+    "--bind", "0.0.0.0:8000",
+    "--workers", "4",
+    "--timeout", "60",
+    "app:app"
+]
+enabled = true
+required = true
+depends_on = ["redis"]
+wait_after = { redis = 2 }
+user = "appuser"
+
+# Celery worker
+[[services]]
+name = "celery-worker"
+command = "/usr/local/bin/celery"
+args = [
+    "-A", "app.celery",
+    "worker",
+    "--loglevel=info",
+    "--concurrency=2"
+]
+enabled = true
+required = false
+depends_on = ["redis"]
+wait_after = { redis = 2 }
+user = "appuser"
+
+# Celery beat scheduler
+[[services]]
+name = "celery-beat"
+command = "/usr/local/bin/celery"
+args = [
+    "-A", "app.celery",
+    "beat",
+    "--loglevel=info"
+]
+enabled = true
+required = false
+depends_on = ["redis"]
+wait_after = { redis = 2 }
+user = "appuser"

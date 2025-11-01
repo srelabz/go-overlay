@@ -23,10 +23,32 @@ import (
 )
 
 var debugMode bool
-var version = "v0.1.0"
+var version = "v0.1.2"
 
 // Socket path for inter-process communication
 const socketPath = "/tmp/go-overlay.sock"
+
+// ANSI color codes
+const (
+	ColorReset   = "\033[0m"
+	ColorRed     = "\033[31m"
+	ColorGreen   = "\033[32m"
+	ColorYellow  = "\033[33m"
+	ColorBlue    = "\033[34m"
+	ColorMagenta = "\033[35m"
+	ColorCyan    = "\033[36m"
+	ColorWhite   = "\033[37m"
+	ColorGray    = "\033[90m"
+
+	// Bold colors
+	ColorBoldRed     = "\033[1;31m"
+	ColorBoldGreen   = "\033[1;32m"
+	ColorBoldYellow  = "\033[1;33m"
+	ColorBoldBlue    = "\033[1;34m"
+	ColorBoldMagenta = "\033[1;35m"
+	ColorBoldCyan    = "\033[1;36m"
+	ColorBoldWhite   = "\033[1;37m"
+)
 
 // Service states enum
 type ServiceState int
@@ -96,9 +118,9 @@ var (
 	activeServices = make(map[string]*ServiceProcess)
 	servicesMutex  sync.RWMutex
 	shutdownWg     sync.WaitGroup
-	
+
 	// IPC server
-	ipcServer net.Listener
+	ipcServer    net.Listener
 	globalConfig *Config
 )
 
@@ -110,18 +132,80 @@ type Timeouts struct {
 	DependencyWait  int `toml:"dependency_wait_timeout,omitempty"`
 }
 
+// DependsOnField supports both single string and array of strings
+type DependsOnField []string
+
+func (d *DependsOnField) UnmarshalTOML(data interface{}) error {
+	switch v := data.(type) {
+	case string:
+		*d = []string{v}
+	case []interface{}:
+		deps := make([]string, len(v))
+		for i, item := range v {
+			str, ok := item.(string)
+			if !ok {
+				return fmt.Errorf("depends_on array must contain only strings")
+			}
+			deps[i] = str
+		}
+		*d = deps
+	default:
+		return fmt.Errorf("depends_on must be a string or array of strings")
+	}
+	return nil
+}
+
+// WaitAfterField supports both int (global wait) and map (per-dependency wait)
+type WaitAfterField struct {
+	Global   int            // Global wait time for all dependencies
+	PerDep   map[string]int // Per-dependency wait times
+	IsPerDep bool           // Flag to indicate which mode is used
+}
+
+func (w *WaitAfterField) UnmarshalTOML(data interface{}) error {
+	switch v := data.(type) {
+	case int64:
+		w.Global = int(v)
+		w.IsPerDep = false
+	case map[string]interface{}:
+		w.PerDep = make(map[string]int)
+		for key, val := range v {
+			intVal, ok := val.(int64)
+			if !ok {
+				return fmt.Errorf("wait_after map values must be integers")
+			}
+			w.PerDep[key] = int(intVal)
+		}
+		w.IsPerDep = true
+	default:
+		return fmt.Errorf("wait_after must be an integer or a map of dependency names to wait times")
+	}
+	return nil
+}
+
+// GetWaitTime returns the wait time for a specific dependency
+func (w *WaitAfterField) GetWaitTime(depName string) int {
+	if w.IsPerDep {
+		if waitTime, exists := w.PerDep[depName]; exists {
+			return waitTime
+		}
+		return 0 // No wait if not specified in map
+	}
+	return w.Global
+}
+
 type Service struct {
-	Name      string   `toml:"name"`
-	Command   string   `toml:"command"`
-	Args      []string `toml:"args"`
-	LogFile   string   `toml:"log_file,omitempty"`
-	PreScript string   `toml:"pre_script,omitempty"`
-	PosScript string   `toml:"pos_script,omitempty"`
-	DependsOn string   `toml:"depends_on,omitempty"`
-	WaitAfter int      `toml:"wait_after,omitempty"`
-	Enabled   *bool    `toml:"enabled,omitempty"` // Changed to pointer to detect if set
-	User      string   `toml:"user,omitempty"`
-	
+	Name      string         `toml:"name"`
+	Command   string         `toml:"command"`
+	Args      []string       `toml:"args"`
+	LogFile   string         `toml:"log_file,omitempty"`
+	PreScript string         `toml:"pre_script,omitempty"`
+	PosScript string         `toml:"pos_script,omitempty"`
+	DependsOn DependsOnField `toml:"depends_on,omitempty"`
+	WaitAfter WaitAfterField `toml:"wait_after,omitempty"`
+	Enabled   *bool          `toml:"enabled,omitempty"` // Changed to pointer to detect if set
+	User      string         `toml:"user,omitempty"`
+
 	// New validation and state fields
 	Required bool `toml:"required,omitempty"` // If true, failure stops whole system
 }
@@ -132,12 +216,12 @@ type Config struct {
 }
 
 type ServiceProcess struct {
-	Name    string
-	Process *exec.Cmd
-	PTY     *os.File
-	Cancel  context.CancelFunc
-	State   ServiceState
-	StateMu sync.RWMutex
+	Name      string
+	Process   *exec.Cmd
+	PTY       *os.File
+	Cancel    context.CancelFunc
+	State     ServiceState
+	StateMu   sync.RWMutex
 	LastError error
 	StartTime time.Time
 	Config    Service // Store original config for restart
@@ -149,7 +233,12 @@ func (sp *ServiceProcess) SetState(state ServiceState) {
 	defer sp.StateMu.Unlock()
 	oldState := sp.State
 	sp.State = state
-	_info("Service", sp.Name, "state changed from", oldState, "to", state)
+
+	// Color-coded state transition message
+	oldStateStr := colorize(getStateColor(oldState), oldState.String())
+	newStateStr := colorize(getStateColor(state), state.String())
+	_info(fmt.Sprintf("Service '%s' state changed from %s to %s",
+		colorize(ColorCyan, sp.Name), oldStateStr, newStateStr))
 }
 
 func (sp *ServiceProcess) GetState() ServiceState {
@@ -164,7 +253,8 @@ func (sp *ServiceProcess) SetError(err error) {
 	sp.LastError = err
 	if err != nil {
 		sp.State = ServiceStateFailed
-		_info("Service", sp.Name, "failed with error:", err)
+		_error(fmt.Sprintf("Service '%s' failed with error: %v",
+			colorize(ColorCyan, sp.Name), err))
 	}
 }
 
@@ -214,7 +304,7 @@ func autoInstallInPath() {
 	// Check if we're already in a standard PATH location
 	pathDirs := []string{"/usr/local/bin", "/usr/bin", "/bin"}
 	execDir := filepath.Dir(execPath)
-	
+
 	for _, pathDir := range pathDirs {
 		if execDir == pathDir {
 			_info("Already installed in PATH:", execDir)
@@ -224,7 +314,7 @@ func autoInstallInPath() {
 
 	// Target installation path
 	targetPath := "/usr/local/bin/go-overlay"
-	
+
 	// Check if symlink already exists and points to our executable
 	if linkTarget, err := os.Readlink(targetPath); err == nil {
 		if linkTarget == execPath {
@@ -236,12 +326,12 @@ func autoInstallInPath() {
 
 	// Create symlink
 	if err := os.Symlink(execPath, targetPath); err != nil {
-		_info("Warning: Could not create symlink in PATH:", err)
-		_info("You can manually run: sudo ln -sf", execPath, targetPath)
+		_warn(fmt.Sprintf("Could not create symlink in PATH: %v", err))
+		_warn(fmt.Sprintf("You can manually run: sudo ln -sf %s %s", execPath, targetPath))
 		return
 	}
 
-	_info("Auto-installed in PATH as 'go-overlay'")
+	_success("Auto-installed in PATH as 'go-overlay'")
 	_info("You can now use: go-overlay list, go-overlay restart <service>, etc.")
 }
 
@@ -342,12 +432,12 @@ func setupSignalHandler() {
 
 func gracefulShutdown() {
 	_info("Starting graceful shutdown process...")
-	
+
 	// Print current service statuses only if we have active services
 	if len(activeServices) > 0 {
 		printServiceStatuses()
 	}
-	
+
 	// Cancel the shutdown context to signal all services to stop
 	// Only if it was initialized (daemon mode)
 	if shutdownCancel != nil {
@@ -382,7 +472,7 @@ func gracefulShutdown() {
 
 	// Channel to signal when all services have stopped
 	done := make(chan struct{})
-	
+
 	go func() {
 		shutdownWg.Wait()
 		close(done)
@@ -432,7 +522,7 @@ func addActiveService(name string, serviceProc *ServiceProcess) {
 func removeActiveService(name string) {
 	servicesMutex.Lock()
 	defer servicesMutex.Unlock()
-	
+
 	if serviceProc, exists := activeServices[name]; exists {
 		serviceProc.SetState(ServiceStateStopped)
 		if serviceProc.PTY != nil {
@@ -444,7 +534,7 @@ func removeActiveService(name string) {
 }
 
 func loadServices(configFile string) error {
-	_info("Loading services from ", configFile)
+	_info(fmt.Sprintf("Loading services from %s", colorize(ColorCyan, configFile)))
 
 	file, err := os.Open(configFile)
 	if err != nil {
@@ -465,13 +555,11 @@ func loadServices(configFile string) error {
 	// Store global config for restart functionality
 	globalConfig = &config
 
-	_info("Configuration validated successfully")
-    _info(fmt.Sprintf(
-        "Timeouts configured: PostScript=%ds, ServiceShutdown=%ds, GlobalShutdown=%ds",
-        config.Timeouts.PostScript,
-        config.Timeouts.ServiceShutdown,
-        config.Timeouts.GlobalShutdown,
-    ))
+	_success("Configuration validated successfully")
+	_info(fmt.Sprintf("Timeouts configured: PostScript=%ds, ServiceShutdown=%ds, GlobalShutdown=%ds",
+		config.Timeouts.PostScript,
+		config.Timeouts.ServiceShutdown,
+		config.Timeouts.GlobalShutdown))
 
 	startedServices := make(map[string]bool)
 	var mu sync.Mutex
@@ -493,7 +581,8 @@ func loadServices(configFile string) error {
 			// Check for shutdown signal before starting
 			select {
 			case <-shutdownCtx.Done():
-				_info("Shutdown signal received, skipping service:", s.Name)
+				_warn(fmt.Sprintf("Shutdown signal received, skipping service: %s",
+					colorize(ColorCyan, s.Name)))
 				return
 			default:
 			}
@@ -518,11 +607,17 @@ func loadServices(configFile string) error {
 				_info("| === PRE-SCRIPT END --- [SERVICE: ", s.Name, "] === |")
 			}
 
-			if s.DependsOn != "" {
-				_info("Service ", s.Name, " waiting for dependency: ", s.DependsOn)
-				if !waitForDependency(s.DependsOn, s.WaitAfter, &mu, startedServices, timeouts.DependencyWait) {
-					_info("Dependency wait cancelled for service:", s.Name)
-					return
+			if len(s.DependsOn) > 0 {
+				_info(fmt.Sprintf("Service '%s' waiting for dependencies: %s",
+					colorize(ColorCyan, s.Name),
+					colorize(ColorYellow, strings.Join(s.DependsOn, ", "))))
+				for _, dep := range s.DependsOn {
+					waitTime := s.WaitAfter.GetWaitTime(dep)
+					if !waitForDependency(dep, waitTime, &mu, startedServices, timeouts.DependencyWait) {
+						_warn(fmt.Sprintf("Dependency wait cancelled for service: %s",
+							colorize(ColorCyan, s.Name)))
+						return
+					}
 				}
 			}
 
@@ -577,9 +672,11 @@ func loadServices(configFile string) error {
 
 			// Handle service errors
 			if err := <-serviceDone; err != nil {
-				_info("Error starting service ", s.Name, ": ", err)
+				_error(fmt.Sprintf("Error starting service '%s': %v",
+					colorize(ColorCyan, s.Name), err))
 				if s.Required {
-					_info("[CRITICAL] Required service ", s.Name, " failed, initiating shutdown")
+					_error(fmt.Sprintf("[CRITICAL] Required service '%s' failed, initiating shutdown",
+						colorize(ColorCyan, s.Name)))
 					gracefulShutdown()
 				}
 			}
@@ -637,7 +734,8 @@ func waitForDependency(depName string, waitAfter int, mu *sync.Mutex, startedSer
 
 		// Check for timeout
 		if time.Since(start) > maxWait {
-			_info("Dependency wait timeout exceeded for", depName)
+			_error(fmt.Sprintf("Dependency wait timeout exceeded for '%s'",
+				colorize(ColorYellow, depName)))
 			return false
 		}
 
@@ -646,8 +744,13 @@ func waitForDependency(depName string, waitAfter int, mu *sync.Mutex, startedSer
 		mu.Unlock()
 
 		if depStarted {
-			_info("Dependency ", depName, " is up. Waiting ", waitAfter, " seconds before starting dependent service.")
-			
+			if waitAfter > 0 {
+				_info(fmt.Sprintf("Dependency '%s' is up. Waiting %ds before starting dependent service",
+					colorize(ColorGreen, depName), waitAfter))
+			} else {
+				_success(fmt.Sprintf("Dependency '%s' is ready", colorize(ColorGreen, depName)))
+			}
+
 			// Wait with cancellation support
 			select {
 			case <-time.After(time.Duration(waitAfter) * time.Second):
@@ -657,8 +760,8 @@ func waitForDependency(depName string, waitAfter int, mu *sync.Mutex, startedSer
 			}
 		}
 
-		_info("Waiting for dependency: ", depName)
-		
+		_info(fmt.Sprintf("Waiting for dependency: %s", colorize(ColorYellow, depName)))
+
 		// Sleep with cancellation support
 		select {
 		case <-time.After(2 * time.Second):
@@ -675,15 +778,17 @@ func joinArgs(args []string) string {
 
 func startServiceWithPTY(service Service, maxLength int, timeouts Timeouts) error {
 	if service.LogFile != "" {
-		_info("Service ", service.Name, " is configured to use log file: ", service.LogFile)
+		_info(fmt.Sprintf("Service '%s' is configured to use log file: %s",
+			colorize(ColorCyan, service.Name),
+			colorize(ColorYellow, service.LogFile)))
 		go tailLogFile(service.LogFile, service.Name)
 		return nil
 	}
 
-	_info("Starting service: ", service.Name)
+	_info(fmt.Sprintf("Starting service: %s", colorize(ColorCyan, service.Name)))
 
 	var cmd *exec.Cmd
-	
+
 	// Use exec.Command directly instead of shell when possible
 	if len(service.Args) > 0 {
 		// If we have args, pass them directly to the command
@@ -700,12 +805,12 @@ func startServiceWithPTY(service Service, maxLength int, timeouts Timeouts) erro
 		if len(service.Args) > 0 {
 			fullCommand = fmt.Sprintf("%s %s", service.Command, joinArgs(service.Args))
 		}
-		
+
 		shell := "sh"
 		if isBashAvailable() {
 			shell = "bash"
 		}
-		
+
 		cmd = exec.Command("su", "-s", shell, "-c", fullCommand, service.User)
 	}
 
@@ -716,11 +821,12 @@ func startServiceWithPTY(service Service, maxLength int, timeouts Timeouts) erro
 		return fmt.Errorf("error starting PTY for service %s: %v", service.Name, err)
 	}
 
-	_info("Service ", service.Name, " started successfully (PID: ", cmd.Process.Pid, ")")
+	_success(fmt.Sprintf("Service '%s' started successfully (PID: %d)",
+		colorize(ColorCyan, service.Name), cmd.Process.Pid))
 
 	// Create service context for graceful shutdown
 	serviceCtx, serviceCancel := context.WithCancel(shutdownCtx)
-	
+
 	// Register the service as active
 	serviceProcess := &ServiceProcess{
 		Name:    service.Name,
@@ -742,41 +848,46 @@ func startServiceWithPTY(service Service, maxLength int, timeouts Timeouts) erro
 	go func() {
 		<-serviceCtx.Done()
 		serviceProcess.SetState(ServiceStateStopping)
-		_info("Gracefully stopping service:", service.Name)
-		
+		_info(fmt.Sprintf("Gracefully stopping service: %s", colorize(ColorCyan, service.Name)))
+
 		// Send SIGTERM to the process
 		if cmd.Process != nil {
 			if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
-				_info("Error sending SIGTERM to service", service.Name, ":", err)
+				_error(fmt.Sprintf("Error sending SIGTERM to service '%s': %v",
+					colorize(ColorCyan, service.Name), err))
 				serviceProcess.SetError(err)
 			}
-			
+
 			// Wait for graceful shutdown with configurable timeout
 			done := make(chan error, 1)
 			go func() {
 				done <- cmd.Wait()
 			}()
-			
+
 			shutdownTimeout := time.Duration(timeouts.ServiceShutdown) * time.Second
 			select {
 			case <-time.After(shutdownTimeout):
 				// Force kill if not stopped gracefully
-				_info("Force killing service", service.Name, "after", shutdownTimeout)
+				_warn(fmt.Sprintf("Force killing service '%s' after %s timeout",
+					colorize(ColorCyan, service.Name), shutdownTimeout))
 				if err := cmd.Process.Kill(); err != nil {
-					_info("Error force killing service", service.Name, ":", err)
+					_error(fmt.Sprintf("Error force killing service '%s': %v",
+						colorize(ColorCyan, service.Name), err))
 					serviceProcess.SetError(err)
 				}
 				<-done // Wait for the process to actually exit
 			case err := <-done:
 				if err != nil {
-					_info("Service", service.Name, "exited with error:", err)
+					_error(fmt.Sprintf("Service '%s' exited with error: %v",
+						colorize(ColorCyan, service.Name), err))
 					serviceProcess.SetError(err)
 				} else {
-					_info("Service", service.Name, "stopped gracefully")
+					_success(fmt.Sprintf("Service '%s' stopped gracefully",
+						colorize(ColorCyan, service.Name)))
 				}
 			}
 		}
-		
+
 		// Clean up
 		if ptmx != nil {
 			ptmx.Close()
@@ -863,8 +974,45 @@ func tailLogFile(filePath, serviceName string) {
 	}
 }
 
+// Helper function to get color for service state
+func getStateColor(state ServiceState) string {
+	switch state {
+	case ServiceStatePending:
+		return ColorYellow
+	case ServiceStateStarting:
+		return ColorCyan
+	case ServiceStateRunning:
+		return ColorGreen
+	case ServiceStateStopping:
+		return ColorMagenta
+	case ServiceStateStopped:
+		return ColorGray
+	case ServiceStateFailed:
+		return ColorRed
+	default:
+		return ColorWhite
+	}
+}
+
+// Helper function to format colored text
+func colorize(color string, text string) string {
+	return color + text + ColorReset
+}
+
 func _info(a ...interface{}) {
-	_table("INFO", a...)
+	_logWithColor("INFO", ColorBoldBlue, a...)
+}
+
+func _warn(a ...interface{}) {
+	_logWithColor("WARN", ColorBoldYellow, a...)
+}
+
+func _error(a ...interface{}) {
+	_logWithColor("ERROR", ColorBoldRed, a...)
+}
+
+func _success(a ...interface{}) {
+	_logWithColor("SUCCESS", ColorBoldGreen, a...)
 }
 
 func _print(a ...interface{}) {
@@ -884,6 +1032,12 @@ func _table(level string, a ...interface{}) {
 	prefix := fmt.Sprintf("[%s]", level)
 	message := fmt.Sprint(a...)
 	fmt.Println(prefix, message)
+}
+
+func _logWithColor(level string, color string, a ...interface{}) {
+	prefix := fmt.Sprintf("%s[%-7s]%s", color, level, ColorReset)
+	message := fmt.Sprint(a...)
+	fmt.Printf("%s %s\n", prefix, message)
 }
 
 func _printEnvVariables() {
@@ -1049,12 +1203,24 @@ func validateService(service Service) ValidationErrors {
 	}
 
 	// Validate wait_after is reasonable
-	if service.WaitAfter < 0 || service.WaitAfter > 300 {
-		errors = append(errors, ValidationError{
-			Field:   "wait_after",
-			Service: service.Name,
-			Message: "wait_after must be between 0 and 300 seconds",
-		})
+	if service.WaitAfter.IsPerDep {
+		for depName, waitTime := range service.WaitAfter.PerDep {
+			if waitTime < 0 || waitTime > 300 {
+				errors = append(errors, ValidationError{
+					Field:   "wait_after",
+					Service: service.Name,
+					Message: fmt.Sprintf("wait_after for dependency '%s' must be between 0 and 300 seconds", depName),
+				})
+			}
+		}
+	} else {
+		if service.WaitAfter.Global < 0 || service.WaitAfter.Global > 300 {
+			errors = append(errors, ValidationError{
+				Field:   "wait_after",
+				Service: service.Name,
+				Message: "wait_after must be between 0 and 300 seconds",
+			})
+		}
 	}
 
 	// Validate user exists if specified
@@ -1079,9 +1245,25 @@ func validateDependencies(services []Service) error {
 
 	// Check if all dependencies exist
 	for _, service := range services {
-		if service.DependsOn != "" {
-			if _, exists := serviceMap[service.DependsOn]; !exists {
-				return fmt.Errorf("service '%s' depends on non-existent service '%s'", service.Name, service.DependsOn)
+		for _, dep := range service.DependsOn {
+			if _, exists := serviceMap[dep]; !exists {
+				return fmt.Errorf("service '%s' depends on non-existent service '%s'", service.Name, dep)
+			}
+		}
+
+		// Validate wait_after map references
+		if service.WaitAfter.IsPerDep {
+			for depName := range service.WaitAfter.PerDep {
+				found := false
+				for _, dep := range service.DependsOn {
+					if dep == depName {
+						found = true
+						break
+					}
+				}
+				if !found {
+					return fmt.Errorf("service '%s' has wait_after for '%s' but doesn't depend on it", service.Name, depName)
+				}
 			}
 		}
 	}
@@ -1105,12 +1287,12 @@ func hasCycles(serviceName string, serviceMap map[string]Service, visited, recur
 		return false
 	}
 
-	if service.DependsOn != "" {
-		if !visited[service.DependsOn] {
-			if hasCycles(service.DependsOn, serviceMap, visited, recursionStack) {
+	for _, dep := range service.DependsOn {
+		if !visited[dep] {
+			if hasCycles(dep, serviceMap, visited, recursionStack) {
 				return true
 			}
-		} else if recursionStack[service.DependsOn] {
+		} else if recursionStack[dep] {
 			return true
 		}
 	}
@@ -1123,20 +1305,27 @@ func hasCycles(serviceName string, serviceMap map[string]Service, visited, recur
 func printServiceStatuses() {
 	servicesMutex.RLock()
 	defer servicesMutex.RUnlock()
-	
-	_info("=== Service Status Summary ===")
+
+	fmt.Println(colorize(ColorBoldCyan, "\n=== Service Status Summary ==="))
 	for name, serviceProc := range activeServices {
 		uptime := time.Since(serviceProc.StartTime).Round(time.Second)
-		status := fmt.Sprintf("Service: %s | State: %s | Uptime: %s", 
-			name, serviceProc.GetState(), uptime)
-		
+		state := serviceProc.GetState()
+		stateColored := colorize(getStateColor(state), state.String())
+
+		status := fmt.Sprintf("  %s │ State: %s │ Uptime: %s",
+			colorize(ColorCyan, fmt.Sprintf("%-15s", name)),
+			stateColored,
+			colorize(ColorWhite, uptime.String()))
+
 		if serviceProc.LastError != nil {
-			status += fmt.Sprintf(" | Last Error: %s", serviceProc.LastError)
+			status += fmt.Sprintf(" │ %s: %s",
+				colorize(ColorRed, "Error"),
+				serviceProc.LastError)
 		}
-		
-		_info(status)
+
+		fmt.Println(status)
 	}
-	_info("=== End Status Summary ===")
+	fmt.Println(colorize(ColorBoldCyan, "=== End Status Summary ===\n"))
 }
 
 // IPC functions
@@ -1150,7 +1339,7 @@ func startIPCServer() error {
 	}
 
 	ipcServer = listener
-	_info("IPC server started at", socketPath)
+	_success(fmt.Sprintf("IPC server started at %s", colorize(ColorCyan, socketPath)))
 
 	go func() {
 		for {
@@ -1271,7 +1460,7 @@ func handleRestartService(serviceName string) IPCResponse {
 	// Restart the service
 	go func() {
 		time.Sleep(1 * time.Second) // Brief pause before restart
-		
+
 		if globalConfig != nil {
 			maxLength := getLongestServiceNameLength(globalConfig.Services)
 			if err := startServiceWithPTY(serviceProc.Config, maxLength, globalConfig.Timeouts); err != nil {
@@ -1303,7 +1492,7 @@ func handleGetStatus() IPCResponse {
 		}
 	}
 
-	message := fmt.Sprintf("Total: %d, Running: %d, Failed: %d", 
+	message := fmt.Sprintf("Total: %d, Running: %d, Failed: %d",
 		totalServices, runningServices, failedServices)
 
 	return IPCResponse{
@@ -1345,15 +1534,21 @@ func listServices() error {
 		return fmt.Errorf("%s", response.Message)
 	}
 
-	fmt.Printf("%-15s %-10s %-8s %-12s %-8s %s\n", 
-		"NAME", "STATE", "PID", "UPTIME", "REQUIRED", "LAST_ERROR")
-	fmt.Println(strings.Repeat("-", 80))
+	// Header with colors
+	fmt.Printf("%s %-15s %s %-10s %s %-8s %s %-12s %s %-8s %s %s%s\n",
+		ColorBoldWhite, "NAME",
+		ColorBoldWhite, "STATE",
+		ColorBoldWhite, "PID",
+		ColorBoldWhite, "UPTIME",
+		ColorBoldWhite, "REQUIRED",
+		ColorBoldWhite, "LAST_ERROR", ColorReset)
+	fmt.Println(colorize(ColorGray, strings.Repeat("─", 85)))
 
 	for _, service := range response.Services {
 		uptime := service.Uptime.Round(time.Second)
-		required := "No"
+		required := colorize(ColorGray, "No")
 		if service.Required {
-			required = "Yes"
+			required = colorize(ColorYellow, "Yes")
 		}
 
 		lastError := service.LastError
@@ -1361,8 +1556,23 @@ func listServices() error {
 			lastError = lastError[:27] + "..."
 		}
 
-		fmt.Printf("%-15s %-10s %-8d %-12s %-8s %s\n",
-			service.Name, service.State, service.PID, uptime, required, lastError)
+		stateColor := getStateColor(service.State)
+		nameColor := ColorCyan
+		pidColor := ColorWhite
+
+		if lastError != "" {
+			lastError = colorize(ColorRed, lastError)
+		} else {
+			lastError = colorize(ColorGray, "-")
+		}
+
+		fmt.Printf("%s%-15s%s %s%-10s%s %s%-8d%s %s%-12s%s %s%-8s%s %s\n",
+			nameColor, service.Name, ColorReset,
+			stateColor, service.State, ColorReset,
+			pidColor, service.PID, ColorReset,
+			ColorWhite, uptime, ColorReset,
+			ColorWhite, required, ColorReset,
+			lastError)
 	}
 
 	return nil
@@ -1378,7 +1588,7 @@ func restartService(serviceName string) error {
 	}
 
 	if response.Success {
-		fmt.Println(response.Message)
+		fmt.Println(colorize(ColorGreen, "✓ "+response.Message))
 	} else {
 		return fmt.Errorf("%s", response.Message)
 	}
@@ -1393,7 +1603,9 @@ func showStatus() error {
 	}
 
 	if response.Success {
-		fmt.Println("System Status:", response.Message)
+		fmt.Printf("%s: %s\n",
+			colorize(ColorBoldCyan, "System Status"),
+			colorize(ColorGreen, response.Message))
 	} else {
 		return fmt.Errorf("%s", response.Message)
 	}
