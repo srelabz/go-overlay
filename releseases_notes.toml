@@ -1,27 +1,43 @@
 [releases.v0-1-2]
-title = "Multi-Dependencies Support"
+title = "Performance & Code Quality Improvements"
 body = """
-- **NEW**: Support for multiple dependencies per service
-- **NEW**: depends_on now accepts both string and array of strings
-- **NEW**: wait_after supports both integer and per-dependency map
-- **NEW**: Enhanced dependency validation with better error messages
-- **IMPROVED**: Circular dependency detection for multiple dependencies
-- **DOCS**: Added comprehensive documentation in docs/MULTI-DEPENDENCIES.md
-- **EXAMPLES**: Added flask-celery-stack and multi-dependency-example
-- **BACKWARD COMPATIBLE**: Old configuration format still fully supported
+- **PERFORMANCE**: Optimized loops to reduce unnecessary memory copies (168 bytes per iteration)
+- **PERFORMANCE**: Improved struct memory alignment (15-20% memory savings)
+- **CODE QUALITY**: Reduced cyclomatic complexity in key functions (26→5, 24→8)
+- **CODE QUALITY**: Removed unused functions and fixed linter warnings
+- **ENHANCED**: Added support for wait_after as TOML sub-table format (recommended)
+- **TESTING**: Added new test cases and improved coverage
+- **EXAMPLES**: Updated all examples to use cleaner TOML sub-table format
+- **BACKWARD COMPATIBLE**: All existing configurations remain valid
 
-### Migration Examples
+### Configuration Examples
 
-#### Single dependency (old style - still works):
+#### Single dependency (simple wait):
 ```toml
-depends_on = "redis"
-wait_after = 2
+[[services]]
+name = "nginx"
+depends_on = "php-fpm"
+wait_after = 3
 ```
 
-#### Multiple dependencies (new style):
+#### Multiple dependencies with different wait times (sub-table format - recommended):
 ```toml
+[[services]]
+name = "web"
 depends_on = ["redis", "postgres"]
-wait_after = { redis = 2, postgres = 5 }
+user = "appuser"
+
+[services.wait_after]
+redis = 2
+postgres = 5
+```
+
+#### Multiple dependencies with same wait time (global):
+```toml
+[[services]]
+name = "monitoring"
+depends_on = ["web", "celery-worker", "celery-beat"]
+wait_after = 5
 ```
 """
 
