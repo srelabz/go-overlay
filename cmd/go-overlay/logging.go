@@ -1,6 +1,11 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"sync"
+)
+
+var logMu sync.Mutex
 
 const (
 	ColorReset   = "\033[0m"
@@ -61,21 +66,20 @@ func _success(a ...interface{}) {
 	_logWithColor("SUCCESS", ColorBoldGreen, a...)
 }
 
-func _print(a ...interface{}) {
-	message := fmt.Sprint(a...)
+func _printLine(message string) {
+	logMu.Lock()
+	defer logMu.Unlock()
 	fmt.Println(message)
 }
 
-func _debug(isDebug bool, a ...interface{}) {
-	if isDebug && !debugMode {
+func _debug(a ...interface{}) {
+	if !debugMode {
 		return
 	}
-	message := fmt.Sprint(a...)
-	fmt.Println(message)
+	_printLine(fmt.Sprint(a...))
 }
 
 func _logWithColor(level, color string, a ...interface{}) {
 	prefix := fmt.Sprintf("%s[%-7s]%s", color, level, ColorReset)
-	message := fmt.Sprint(a...)
-	fmt.Printf("%s %s\n", prefix, message)
+	_printLine(fmt.Sprintf("%s %s", prefix, fmt.Sprint(a...)))
 }

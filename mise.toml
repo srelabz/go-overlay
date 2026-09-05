@@ -1,5 +1,5 @@
 [tools]
-go = "1.24"
+go = "1.27"
 python = "3.12"
 
 [settings.python]
@@ -27,6 +27,10 @@ run = "invoke ci.ci-security"
 [tasks."ci:build"]
 description = "Build binary only"
 run = "invoke ci.ci-build"
+
+[tasks."ci:notes"]
+description = "Test the release notes engine (releases/<tag>.yaml)"
+run = "python .github/scripts/test_release.py"
 
 [tasks.cd]
 description = "Run CD pipeline (release with tests)"

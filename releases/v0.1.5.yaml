@@ -1,0 +1,42 @@
+tag: v0.1.5
+title: Supervisor hardening, Go 1.27 and supply-chain fixes
+
+highlights: |
+  Four high-severity lifecycle bugs are fixed: `max_restarts` was never enforced,
+  a clean process exit produced phantom errors, a long log line silenced a service
+  for good, and `restart` over the CLI leaked the shutdown wait group. The toolchain
+  moves to Go 1.27.1 and the published binary now ships a checksum.
+
+features:
+  - "Orphan process reaping when the supervisor runs as PID 1, so long-lived containers no longer accumulate zombies"
+  - "`--config` / `-c` flag to run with a services file outside `/services.toml`"
+  - "`GO_OVERLAY_SOCKET` to relocate the IPC socket; the default moves to `/run/go-overlay.sock` with a `/tmp` fallback"
+  - "Every release now publishes `go-overlay.sha256` so image builds can verify the download"
+
+fixes:
+  - "`max_restarts` is enforced: restart counters live per service name instead of being reset by each new process, which turned a crash loop into an infinite restart loop"
+  - "A clean exit no longer sends SIGTERM to a dead process nor calls `Wait` twice, so a normal shutdown stops logging spurious FAILED states and errors"
+  - "A log line larger than the buffer no longer stops the reader; output is emitted in chunks and nothing after it is lost"
+  - "`restart <service>` over the CLI returns immediately, stops holding the service mutex for two seconds, and no longer leaks the shutdown wait group into every later shutdown"
+  - "A service configured with `log_file` is actually started; before, only a broken tail ran and the process never launched"
+  - "Stopping a service signals the whole process group, so shells, wrappers and forked workers are terminated instead of surviving as orphans"
+  - "The supervisor exits with status 1 when a required service fails, so orchestrators see the failure"
+  - "Dependency waiting is event driven instead of polling every two seconds, removing up to two seconds of latency per dependency hop"
+  - "`global_shutdown_timeout` from the config is honoured; the value was previously hardcoded to 30 seconds"
+
+changes:
+  - "Go 1.24.8 to 1.27.1; cobra 1.10.2, go-toml 2.4.3, pflag 1.0.10"
+  - "IPC socket is created with mode 0600 and per-connection deadlines, with request size limits"
+  - "Services with `user` are started through setuid/setgid instead of `su`, so no shell sits between the supervisor and the process"
+  - "`--debug` redacts values of environment variables whose names look sensitive"
+  - "Alpine base images are pinned by digest and the release image verifies `BINARY_SHA256` when provided"
+  - "`Dockerfile.release` no longer writes to `/scripts` before creating it, and builds the download URL correctly for tagged versions"
+  - "gosec and govulncheck are pinned in the pipeline; `.golangci.yml` migrated to the v2 schema and runs clean"
+  - "Release notes moved to `releases/<tag>.yaml`, published by the pipeline as the release body"
+  - "Test coverage raised from 33.7% to 49.7%, with unit and integration suites passing under the race detector"
+  - "README rewritten for discoverability: what problem the supervisor solves, a comparison against s6-overlay, supervisord and tini, use cases and a FAQ"
+
+breaking:
+  - "Services with `user` receive their arguments literally; configurations that relied on shell quoting through `su` need adjusting"
+  - "`log_file` now redirects the process stdout and stderr instead of tailing an existing file"
+  - "Auto-installing the binary into PATH at startup is opt-in via `GO_OVERLAY_AUTO_INSTALL=true`; the `install` command is unchanged"

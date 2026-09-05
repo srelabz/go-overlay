@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 from typing import Optional
 from pathlib import Path
 from minio import Minio
+import functools
 import datetime
 import shutil
 import json
@@ -22,11 +23,65 @@ GO_ENV = {
     "DOCKER_TAG": "latest",
 }
 RELEASE_FILENAME = "go-overlay-linux-amd64"
+GOSEC_VERSION = "v2.29.0"
+GOVULNCHECK_VERSION = "v1.7.0"
+GOLANGCI_VERSION = "v2.13.2"
 
 
 def _run(c, cmd: str, pty: bool = True, env=None):
     """Helper to run commands."""
     return c.run(cmd, pty=pty, env=env)
+
+
+@functools.lru_cache(maxsize=1)
+def _mise_prefix() -> str:
+    """Returns 'mise exec -- ' when mise is available, otherwise an empty string.
+
+    CI runners install Go through actions/setup-go and have no mise binary, so
+    every toolchain command must work with and without it.
+    """
+    return "mise exec -- " if shutil.which("mise") else ""
+
+
+def go_cmd(args: str) -> str:
+    """Builds a Go command that works with or without mise."""
+    return f"{_mise_prefix()}go {args}"
+
+
+_GO_BIN_DIR: Optional[str] = None
+
+
+def _go_bin_dir(c) -> str:
+    """Returns the directory where `go install` places binaries."""
+    global _GO_BIN_DIR
+    if _GO_BIN_DIR is not None:
+        return _GO_BIN_DIR
+
+    _GO_BIN_DIR = _resolve_go_bin_dir(c)
+    return _GO_BIN_DIR
+
+
+def _resolve_go_bin_dir(c) -> str:
+    """Asks the Go toolchain where installed binaries land."""
+    for var in ("GOBIN", "GOPATH"):
+        result = c.run(go_cmd(f"env {var}"), hide=True, warn=True)
+        value = (result.stdout or "").strip()
+        if not value:
+            continue
+        return value if var == "GOBIN" else str(Path(value) / "bin")
+    return str(Path.home() / "go" / "bin")
+
+
+def go_tool(c, name: str) -> str:
+    """Returns the absolute path of a tool installed by `go install`.
+
+    Falls back to the bare name when the binary is already on PATH, so the
+    tasks keep working if the tool comes from the system instead.
+    """
+    candidate = Path(_go_bin_dir(c)) / name
+    if candidate.is_file():
+        return str(candidate)
+    return shutil.which(name) or str(candidate)
 
 
 def getenv(name: str, default: Optional[str] = None, required: bool = False) -> str:
@@ -116,7 +171,7 @@ def build_linux(c):
     print("Building for Linux...")
     env = os.environ.copy()
     env.update({"CGO_ENABLED": "0", "GOOS": "linux"})
-    _run(c, f"{GO_ENV['GOBUILD']} -o {GO_ENV['BINARY_UNIX']} -v ./cmd/go-overlay", env=env)
+    _run(c, f"{GO_ENV['GOBUILD']} -trimpath -ldflags='-s -w' -o {GO_ENV['BINARY_UNIX']} -v ./cmd/go-overlay", env=env)
 
 
 @task
@@ -178,13 +233,13 @@ def lint(c, strict=False):
     """Run golangci-lint."""
     print("Running golangci-lint...")
     # Check if golangci-lint is installed
-    result = c.run("mise exec -- which golangci-lint", warn=True, hide=True)
-    if result.ok:
+    golangci = go_tool(c, "golangci-lint")
+    if Path(golangci).is_file() or shutil.which(golangci):
         if strict:
-            _run(c, "mise exec -- golangci-lint run --timeout 5m")
+            _run(c, f"{golangci} run --timeout 5m")
         else:
             # Run with warnings allowed (only fail on errors)
-            result = c.run("mise exec -- golangci-lint run --timeout 5m --max-issues-per-linter=0 --max-same-issues=0", warn=True, pty=True)
+            result = c.run(f"{golangci} run --timeout 5m --max-issues-per-linter=0 --max-same-issues=0", warn=True, pty=True)
             if result.return_code != 0:
                 print("⚠️  Linting found issues (see above)")
                 print("💡 Run 'invoke quality.lint --strict' to fail on warnings")
@@ -193,7 +248,7 @@ def lint(c, strict=False):
     else:
         print("⚠️  golangci-lint not installed. Install with:")
         print("    invoke tools")
-        print("    or manually: mise exec -- go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest")
+        print(f"    or manually: {go_cmd('install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@' + GOLANGCI_VERSION)}")
         sys.exit(1)
 
 
@@ -369,23 +424,22 @@ def tools(c):
     print("Installing development tools...")
 
     print("\n📦 Installing golangci-lint...")
-    c.run("mise exec -- go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest", pty=True)
+    c.run(go_cmd(f"install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@{GOLANGCI_VERSION}"), pty=True)
 
     print("\n📦 Installing gosec...")
-    c.run("mise exec -- go install github.com/securego/gosec/v2/cmd/gosec@latest", pty=True)
+    c.run(go_cmd(f"install github.com/securego/gosec/v2/cmd/gosec@{GOSEC_VERSION}"), pty=True)
 
     print("\n📦 Installing gofumpt...")
-    c.run("mise exec -- go install mvdan.cc/gofumpt@latest", pty=True)
+    c.run(go_cmd("install mvdan.cc/gofumpt@latest"), pty=True)
 
     print("\n📦 Installing goimports...")
-    c.run("mise exec -- go install golang.org/x/tools/cmd/goimports@latest", pty=True)
+    c.run(go_cmd("install golang.org/x/tools/cmd/goimports@latest"), pty=True)
 
     print("\n📦 Installing staticcheck...")
-    c.run("mise exec -- go install honnef.co/go/tools/cmd/staticcheck@latest", pty=True)
+    c.run(go_cmd("install honnef.co/go/tools/cmd/staticcheck@latest"), pty=True)
 
     print("\n✅ All development tools installed!")
-    print("\n💡 Tools are installed in mise's Go environment")
-    print("   Use 'mise exec -- <command>' to run them")
+    print(f"\n💡 Tools are installed in {_go_bin_dir(c)}")
 
 
 # =============================================================================
@@ -630,7 +684,7 @@ def security_gosec(c):
     reports_dir.mkdir(parents=True, exist_ok=True)
     report_path = reports_dir / "gosec.json"
 
-    c.run("mise exec -- go install github.com/securego/gosec/v2/cmd/gosec@latest", pty=True)
+    c.run(go_cmd(f"install github.com/securego/gosec/v2/cmd/gosec@{GOSEC_VERSION}"), pty=True)
 
     min_sev = os.getenv("GOSEC_MIN_SEVERITY", "HIGH").upper()
     exclude_rules = os.getenv("GOSEC_EXCLUDE_RULES", "").strip()
@@ -646,7 +700,7 @@ def security_gosec(c):
     flags_str = " ".join(gosec_flags)
 
     c.run(
-        f"mise exec -- gosec {flags_str} ./...",
+        f"{go_tool(c, 'gosec')} {flags_str} ./...",
         pty=True,
         warn=True,
     )
@@ -695,10 +749,10 @@ def security_govulncheck(c):
     reports_dir.mkdir(parents=True, exist_ok=True)
     report_path = reports_dir / "govulncheck.json"
 
-    c.run("mise exec -- go install golang.org/x/vuln/cmd/govulncheck@latest", pty=True)
+    c.run(go_cmd(f"install golang.org/x/vuln/cmd/govulncheck@{GOVULNCHECK_VERSION}"), pty=True)
 
     c.run(
-        f"mise exec -- govulncheck -json ./... > {report_path}",
+        f"{go_tool(c, 'govulncheck')} -json ./... > {report_path}",
         pty=True,
         warn=True,
     )

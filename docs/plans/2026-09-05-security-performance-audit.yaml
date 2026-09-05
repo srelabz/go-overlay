@@ -1,0 +1,109 @@
+plan: security-performance-audit
+title: "Auditoria de seguranca e performance do go-overlay"
+status: done
+created: 2026-09-05
+updated: 2026-09-05
+goal: "Registrar achados da auditoria e as correcoes aplicadas no supervisor"
+context: "go-overlay v0.1.3 sobre Go 1.27.1. Achados P1-P3 e S2-S3 confirmados com teste descartavel e probe; correcoes implementadas e cobertas por testes em specs/supervisor-hardening.spec.yaml"
+scope:
+  - "cmd/go-overlay/*.go"
+  - "Dockerfile, Dockerfile.release, workflows, tasks.py, release.py"
+out_of_scope:
+  - "Bump de VERSION e release notes"
+  - "Commit e push"
+stages:
+  - id: p1-max-restarts
+    severity: high
+    confirmed: true
+    status: done
+    desc: "max_restarts nunca aplicado: cada restart criava ServiceProcess novo com contador zerado, gerando crash-loop infinito. Corrigido com contadores por nome em restart.go (restartCount, incrementRestartCount, resetRestartCount). Teste TestIntegrationMaxRestartsIsEnforced prova o limite."
+  - id: p2-double-wait
+    severity: high
+    confirmed: true
+    status: done
+    desc: "Saida natural disparava SIGTERM em processo morto e um segundo cmd.Wait. Agora ha um unico waiter publicando em canal, e a intencao de parada e um CAS atomico (stopIntent). Execucao limpa nao produz nenhuma linha ERROR, verificado ponta a ponta."
+  - id: p3-log-line-limit
+    severity: high
+    confirmed: true
+    status: done
+    desc: "bufio.Scanner abortava o stream em linha maior que 64KB, perdendo todo log posterior. streamServiceLogs passou a usar bufio.Reader com ReadSlice, emitindo a linha em blocos sem perder dados. Teste TestStreamServiceLogsKeepsOutputAfterLongLine cobre 200KB."
+  - id: p4-ipc-restart
+    severity: high
+    confirmed: false
+    status: done
+    desc: "handleRestartService segurava o mutex por 2s, deletava o servico sem shutdownWg.Done e podia duplicar processo. Agora apenas sinaliza RequestStop e retorna; o proprio lifecycle limpa e reagenda. Testes cobrem retorno imediato, cancelamento e rejeicao de pedido duplicado."
+  - id: p5-shutdown-exitcode
+    severity: medium
+    confirmed: false
+    status: done
+    desc: "gracefulShutdown agora e sync.Once, usa global_shutdown_timeout da config, le activeServices sob lock e o processo sai com codigo 1 quando um servico required falha. Verificado ponta a ponta: exit 1 na falha, exit 0 no SIGTERM."
+  - id: p6-zombie-reaping
+    severity: medium
+    confirmed: false
+    status: done
+    desc: "Reaper de orfaos ativado quando o supervisor roda como PID 1. Usa waitid com WNOWAIT para inspecionar o filho pronto sem consumi-lo e so reapa PIDs fora do registro de filhos rastreados, preservando o exit status do os/exec. Limitado a linux amd64 e arm64; demais plataformas usam stub."
+  - id: s1-su-shell
+    severity: medium
+    confirmed: false
+    status: done
+    desc: "user= nao usa mais su nem shell. buildServiceCommand resolve uid, gid e grupos via os/user e aplica syscall.Credential, alem de exportar HOME, USER e LOGNAME. validateUser troca o shell-out para id por lookup e avisa quando o supervisor nao e root."
+  - id: s2-docker-supply-chain
+    severity: medium
+    confirmed: true
+    status: done
+    desc: "alpine pinada em 3.24.1 com digest sha256 nos dois Dockerfiles. Dockerfile.release baixa por wget montando a URL correta para tag ou latest, valida BINARY_SHA256 quando informado e cria /scripts antes de usar. Os blobs de script de exemplo quebrados foram removidos. release.py publica go-overlay.sha256 e builda com trimpath."
+  - id: s3-ipc-socket
+    severity: low
+    confirmed: true
+    status: done
+    desc: "Socket movido para /run/go-overlay.sock com fallback /tmp, chmod 0600 apos o Listen, deadline de 10s por conexao e leitura limitada a 64KB. Caminho configuravel por GO_OVERLAY_SOCKET. Teste verifica a permissao 0600."
+  - id: s4-script-exec
+    severity: low
+    confirmed: false
+    status: done
+    desc: "runScript executa o arquivo diretamente em vez de shell -c com o caminho, com fallback para shell apenas quando o binario nao e executavel. O chmod passou a ocorrer somente quando o arquivo ainda nao tem bit de execucao, em vez de a cada start."
+  - id: s5-env-exposure
+    severity: low
+    confirmed: false
+    status: done
+    desc: "--debug passou a mascarar valores de variaveis sensiveis por padrao de nome, mostrando apenas o tamanho. Heranca de env pelos servicos foi mantida por compatibilidade e esta documentada."
+  - id: s6-autoinstall
+    severity: info
+    confirmed: false
+    status: done
+    desc: "Auto instalacao virou opt-in via GO_OVERLAY_AUTO_INSTALL. O comando install passou a retornar erro em vez de apenas logar, e nao sobrescreve arquivo que nao seja symlink."
+  - id: p7-dep-poll
+    severity: low
+    confirmed: false
+    status: done
+    desc: "Poll de 2s por dependencia substituido por dependencyTracker com canais de ready e failed. Dependencia pronta libera o dependente imediatamente; log de espera agora e a cada 10s."
+  - id: p8-misc
+    severity: low
+    confirmed: false
+    status: done
+    desc: "Cliente HTTP compartilhado com body drenado nos health checks, LastError lido sob lock via GetError, EIO do PTY tratado como fim de stream, saida de log serializada por mutex, .golangci.yml migrado para schema v2 sem linters removidos e gosec e govulncheck pinados no tasks.py."
+  - id: log-file-mode
+    severity: high
+    confirmed: true
+    status: done
+    desc: "Achado adicional durante a correcao: servico com log_file nunca era iniciado, apenas o arquivo era seguido por um tail que parava no primeiro EOF. Agora o processo e iniciado com stdout e stderr redirecionados para o arquivo em modo append. Teste TestStartServiceWritesToLogFile cobre o caso."
+  - id: process-group-stop
+    severity: medium
+    confirmed: true
+    status: done
+    desc: "Melhoria adicional: parada e kill passam a sinalizar o process group inteiro, encerrando netos como shells e workers forkados. Teste TestIntegrationStopKillsProcessGroup falha se algum processo do grupo sobreviver."
+  - id: global-state-race
+    severity: medium
+    confirmed: true
+    status: done
+    desc: "Data race encontrada ao rodar go test -race: timer de restart lia shutdownCtx e globalConfig enquanto outra goroutine os reatribuia. Ambos ganharam acessores com mutex e o restart agendado guarda o contexto da epoca em que foi criado. Suites unit e integration passam com -race."
+risks:
+  - "Servicos com user= que dependiam de quoting do shell mudam de semantica: argumentos agora vao literais para o processo"
+  - "log_file muda de tail para redirecionamento; quem dependia do comportamento antigo vera o servico realmente iniciar"
+  - "Auto instalacao deixou de ocorrer por padrao; usar GO_OVERLAY_AUTO_INSTALL=true para o comportamento anterior"
+rollback:
+  - "Alteracoes estao no working tree, sem commit: git checkout -- cmd/go-overlay Dockerfile Dockerfile.release .golangci.yml tasks.py .github README.md reverte tudo"
+decisions:
+  - "Correcoes cobertas por testes novos: cobertura subiu de 33.7% para 49.7%"
+  - "gosec passou de 9 findings para 0, com 9 pragmas nosec em pontos intencionais do dominio"
+  - "golangci-lint v2 roda limpo e pode ser adicionado ao pipeline de CI"
