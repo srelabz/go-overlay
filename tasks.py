@@ -22,6 +22,8 @@ GO_ENV = {
     "DOCKER_TAG": "latest",
 }
 RELEASE_FILENAME = "go-overlay-linux-amd64"
+GOSEC_VERSION = "v2.29.0"
+GOVULNCHECK_VERSION = "v1.7.0"
 
 
 def _run(c, cmd: str, pty: bool = True, env=None):
@@ -116,7 +118,7 @@ def build_linux(c):
     print("Building for Linux...")
     env = os.environ.copy()
     env.update({"CGO_ENABLED": "0", "GOOS": "linux"})
-    _run(c, f"{GO_ENV['GOBUILD']} -o {GO_ENV['BINARY_UNIX']} -v ./cmd/go-overlay", env=env)
+    _run(c, f"{GO_ENV['GOBUILD']} -trimpath -ldflags='-s -w' -o {GO_ENV['BINARY_UNIX']} -v ./cmd/go-overlay", env=env)
 
 
 @task
@@ -372,7 +374,7 @@ def tools(c):
     c.run("mise exec -- go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest", pty=True)
 
     print("\n📦 Installing gosec...")
-    c.run("mise exec -- go install github.com/securego/gosec/v2/cmd/gosec@latest", pty=True)
+    c.run(f"mise exec -- go install github.com/securego/gosec/v2/cmd/gosec@{GOSEC_VERSION}", pty=True)
 
     print("\n📦 Installing gofumpt...")
     c.run("mise exec -- go install mvdan.cc/gofumpt@latest", pty=True)
@@ -630,7 +632,7 @@ def security_gosec(c):
     reports_dir.mkdir(parents=True, exist_ok=True)
     report_path = reports_dir / "gosec.json"
 
-    c.run("mise exec -- go install github.com/securego/gosec/v2/cmd/gosec@latest", pty=True)
+    c.run(f"mise exec -- go install github.com/securego/gosec/v2/cmd/gosec@{GOSEC_VERSION}", pty=True)
 
     min_sev = os.getenv("GOSEC_MIN_SEVERITY", "HIGH").upper()
     exclude_rules = os.getenv("GOSEC_EXCLUDE_RULES", "").strip()
@@ -695,7 +697,7 @@ def security_govulncheck(c):
     reports_dir.mkdir(parents=True, exist_ok=True)
     report_path = reports_dir / "govulncheck.json"
 
-    c.run("mise exec -- go install golang.org/x/vuln/cmd/govulncheck@latest", pty=True)
+    c.run(f"mise exec -- go install golang.org/x/vuln/cmd/govulncheck@{GOVULNCHECK_VERSION}", pty=True)
 
     c.run(
         f"mise exec -- govulncheck -json ./... > {report_path}",

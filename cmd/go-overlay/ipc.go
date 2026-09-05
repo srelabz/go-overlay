@@ -2,13 +2,45 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net"
+	"os"
 	"strings"
+	"syscall"
 	"time"
 )
 
-const socketPath = "/tmp/go-overlay.sock"
+const writeOK = 0x2
+
+const (
+	envSocketPath   = "GO_OVERLAY_SOCKET"
+	runSocketPath   = "/run/go-overlay.sock"
+	tmpSocketPath   = "/tmp/go-overlay.sock"
+	ipcConnDeadline = 10 * time.Second
+	ipcMaxRequest   = 64 * 1024
+)
+
+var socketPath = resolveSocketPath()
+
+func resolveSocketPath() string {
+	if custom := strings.TrimSpace(os.Getenv(envSocketPath)); custom != "" {
+		return custom
+	}
+	if isWritableDir("/run") {
+		return runSocketPath
+	}
+	return tmpSocketPath
+}
+
+func isWritableDir(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil || !info.IsDir() {
+		return false
+	}
+	return syscall.Access(path, writeOK) == nil
+}
 
 type CommandType string
 
@@ -39,11 +71,16 @@ type IPCResponse struct {
 }
 
 func startIPCServer() error {
-	_ = removeSocketFile()
+	removeSocketFileIfPresent()
 
 	listener, err := net.Listen("unix", socketPath)
 	if err != nil {
 		return fmt.Errorf("failed to create Unix socket: %w", err)
+	}
+
+	if err := os.Chmod(socketPath, 0o600); err != nil {
+		_ = listener.Close()
+		return fmt.Errorf("failed to restrict socket permissions: %w", err)
 	}
 
 	ipcServer = listener
@@ -54,10 +91,13 @@ func startIPCServer() error {
 			conn, err := listener.Accept()
 			if err != nil {
 				select {
-				case <-shutdownCtx.Done():
+				case <-shutdownContext().Done():
 					return
 				default:
-					_info("Error accepting IPC connection:", err)
+					if isStreamClosed(err) {
+						return
+					}
+					_warn(fmt.Sprintf("Error accepting IPC connection: %v", err))
 					continue
 				}
 			}
@@ -71,12 +111,16 @@ func startIPCServer() error {
 func handleIPCConnection(conn net.Conn) {
 	defer conn.Close()
 
-	decoder := json.NewDecoder(conn)
+	if err := conn.SetDeadline(time.Now().Add(ipcConnDeadline)); err != nil {
+		_debug(fmt.Sprintf("Could not set IPC deadline: %v", err))
+	}
+
+	decoder := json.NewDecoder(io.LimitReader(conn, ipcMaxRequest))
 	encoder := json.NewEncoder(conn)
 
 	var cmd IPCCommand
 	if err := decoder.Decode(&cmd); err != nil {
-		_info("Error decoding IPC command:", err)
+		_debug(fmt.Sprintf("Error decoding IPC command: %v", err))
 		return
 	}
 
@@ -90,14 +134,11 @@ func handleIPCConnection(conn net.Conn) {
 	case CmdGetStatus:
 		response = handleGetStatus()
 	default:
-		response = IPCResponse{
-			Success: false,
-			Message: "Unknown command type",
-		}
+		response = IPCResponse{Success: false, Message: "Unknown command type"}
 	}
 
 	if err := encoder.Encode(response); err != nil {
-		_info("Error encoding IPC response:", err)
+		_debug(fmt.Sprintf("Error encoding IPC response: %v", err))
 	}
 }
 
@@ -108,8 +149,8 @@ func handleListServices() IPCResponse {
 	services := make([]ServiceInfo, 0, len(activeServices))
 	for name, serviceProc := range activeServices {
 		var lastError string
-		if serviceProc.LastError != nil {
-			lastError = serviceProc.LastError.Error()
+		if err := serviceProc.GetError(); err != nil {
+			lastError = err.Error()
 		}
 
 		services = append(services, ServiceInfo{
@@ -122,17 +163,14 @@ func handleListServices() IPCResponse {
 		})
 	}
 
-	return IPCResponse{
-		Success:  true,
-		Services: services,
-	}
+	return IPCResponse{Success: true, Services: services}
 }
 
 func handleRestartService(serviceName string) IPCResponse {
-	servicesMutex.Lock()
-	defer servicesMutex.Unlock()
-
+	servicesMutex.RLock()
 	serviceProc, exists := activeServices[serviceName]
+	servicesMutex.RUnlock()
+
 	if !exists {
 		return IPCResponse{
 			Success: false,
@@ -140,35 +178,14 @@ func handleRestartService(serviceName string) IPCResponse {
 		}
 	}
 
+	if !serviceProc.RequestStop(stopIntentRestartOperator) {
+		return IPCResponse{
+			Success: false,
+			Message: fmt.Sprintf("Service '%s' is already stopping or restarting", serviceName),
+		}
+	}
+
 	_info("Restarting service:", serviceName)
-
-	serviceProc.SetState(ServiceStateStopping)
-	if serviceProc.Cancel != nil {
-		serviceProc.Cancel()
-	}
-
-	time.Sleep(2 * time.Second)
-
-	if serviceProc.Process != nil && serviceProc.Process.Process != nil {
-		if err := serviceProc.Process.Process.Kill(); err != nil {
-			_info("Error killing service during restart:", err)
-		}
-	}
-
-	if serviceProc.PTY != nil {
-		_ = serviceProc.PTY.Close()
-	}
-	delete(activeServices, serviceName)
-
-	go func() {
-		time.Sleep(1 * time.Second)
-		if globalConfig != nil {
-			maxLength := getLongestServiceNameLength(globalConfig.Services)
-			if err := startServiceWithPTY(serviceProc.Config, maxLength, globalConfig.Timeouts); err != nil {
-				_info("Error restarting service", serviceName, ":", err)
-			}
-		}
-	}()
 
 	return IPCResponse{
 		Success: true,
@@ -185,39 +202,38 @@ func handleGetStatus() IPCResponse {
 	failedServices := 0
 
 	for _, serviceProc := range activeServices {
-		state := serviceProc.GetState()
-		if state == ServiceStateRunning {
+		switch serviceProc.GetState() {
+		case ServiceStateRunning:
 			runningServices++
-		} else if state == ServiceStateFailed {
+		case ServiceStateFailed:
 			failedServices++
 		}
 	}
 
-	message := fmt.Sprintf("Total: %d, Running: %d, Failed: %d",
-		totalServices, runningServices, failedServices)
-
 	return IPCResponse{
 		Success: true,
-		Message: message,
+		Message: fmt.Sprintf("Total: %d, Running: %d, Failed: %d",
+			totalServices, runningServices, failedServices),
 	}
 }
 
 func sendIPCCommand(cmd IPCCommand) (*IPCResponse, error) {
-	conn, err := net.Dial("unix", socketPath)
+	conn, err := net.DialTimeout("unix", socketPath, ipcConnDeadline)
 	if err != nil {
 		return nil, fmt.Errorf("could not connect to Go Overlay daemon: %w", err)
 	}
 	defer conn.Close()
 
-	encoder := json.NewEncoder(conn)
-	decoder := json.NewDecoder(conn)
+	if err := conn.SetDeadline(time.Now().Add(ipcConnDeadline)); err != nil {
+		return nil, fmt.Errorf("could not set connection deadline: %w", err)
+	}
 
-	if err := encoder.Encode(cmd); err != nil {
+	if err := json.NewEncoder(conn).Encode(cmd); err != nil {
 		return nil, fmt.Errorf("error sending command: %w", err)
 	}
 
 	var response IPCResponse
-	if err := decoder.Decode(&response); err != nil {
+	if err := json.NewDecoder(io.LimitReader(conn, ipcMaxRequest)).Decode(&response); err != nil {
 		return nil, fmt.Errorf("error receiving response: %w", err)
 	}
 
@@ -255,10 +271,6 @@ func listServices() error {
 			lastError = lastError[:27] + "..."
 		}
 
-		stateColor := getStateColor(service.State)
-		nameColor := ColorCyan
-		pidColor := ColorWhite
-
 		if lastError != "" {
 			lastError = colorize(ColorRed, lastError)
 		} else {
@@ -266,9 +278,9 @@ func listServices() error {
 		}
 
 		fmt.Printf("%s%-15s%s %s%-10s%s %s%-8d%s %s%-12s%s %s%-8s%s %s\n",
-			nameColor, service.Name, ColorReset,
-			stateColor, service.State, ColorReset,
-			pidColor, service.PID, ColorReset,
+			ColorCyan, service.Name, ColorReset,
+			getStateColor(service.State), service.State, ColorReset,
+			ColorWhite, service.PID, ColorReset,
 			ColorWhite, uptime, ColorReset,
 			ColorWhite, required, ColorReset,
 			lastError)
@@ -286,12 +298,11 @@ func restartService(serviceName string) error {
 		return err
 	}
 
-	if response.Success {
-		fmt.Println(colorize(ColorGreen, "✓ "+response.Message))
-	} else {
+	if !response.Success {
 		return fmt.Errorf("%s", response.Message)
 	}
 
+	fmt.Println(colorize(ColorGreen, "✓ "+response.Message))
 	return nil
 }
 
@@ -301,17 +312,22 @@ func showStatus() error {
 		return err
 	}
 
-	if response.Success {
-		fmt.Printf("%s: %s\n",
-			colorize(ColorBoldCyan, "System Status"),
-			colorize(ColorGreen, response.Message))
-	} else {
+	if !response.Success {
 		return fmt.Errorf("%s", response.Message)
 	}
 
+	fmt.Printf("%s: %s\n",
+		colorize(ColorBoldCyan, "System Status"),
+		colorize(ColorGreen, response.Message))
 	return nil
 }
 
 func removeSocketFile() error {
 	return removeFile(socketPath)
+}
+
+func removeSocketFileIfPresent() {
+	if err := removeSocketFile(); err != nil && !errors.Is(err, os.ErrNotExist) {
+		_warn(fmt.Sprintf("Could not remove socket %s: %v", socketPath, err))
+	}
 }

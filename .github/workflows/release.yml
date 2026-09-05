@@ -26,7 +26,7 @@ jobs:
       - name: 🔧 Setup Go
         uses: actions/setup-go@v5
         with: 
-          go-version: '1.24.8'
+          go-version: '1.27.1'
 
       - name: 🐍 Setup Python
         uses: actions/setup-python@v5
@@ -35,6 +35,9 @@ jobs:
 
       - name: 📦 Install Python dependencies
         run: pip install invoke python-dotenv boto3 minio requests
+
+      - name: 🧪 Test release notes engine
+        run: python .github/scripts/test_release.py
 
       - name: 🔍 Debug environment
         run: |
@@ -71,3 +74,9 @@ jobs:
             echo "- 📦 Binary Size: $(numfmt --to=iec-i --suffix=B $SIZE)" >> $GITHUB_STEP_SUMMARY
           fi
           echo "- 🏷️  Version: ${GITHUB_REF#refs/tags/}" >> $GITHUB_STEP_SUMMARY
+          TAG="${GITHUB_REF#refs/tags/}"
+          if [ -f "releases/${TAG}.yaml" ] || [ -f "releases/${TAG}.yml" ]; then
+            echo "- 📝 Notes source: \`releases/${TAG}.yaml\`" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- 📝 Notes source: commit history (add \`releases/${TAG}.yaml\`)" >> $GITHUB_STEP_SUMMARY
+          fi

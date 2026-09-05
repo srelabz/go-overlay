@@ -73,7 +73,7 @@ func validateConfig(config *Config) error {
 
 	for i := range config.Services {
 		service := &config.Services[i]
-		if errs := validateService(*service); len(errs) > 0 {
+		if errs := validateService(service); len(errs) > 0 {
 			errors = append(errors, errs...)
 		}
 	}
@@ -92,24 +92,24 @@ func validateConfig(config *Config) error {
 	return nil
 }
 
-func validateService(service Service) ValidationErrors {
+func validateService(service *Service) ValidationErrors {
 	var errors ValidationErrors
 
-	errors = append(errors, validateRequiredFields(&service)...)
-	errors = append(errors, validateServiceName(&service)...)
+	errors = append(errors, validateRequiredFields(service)...)
+	errors = append(errors, validateServiceName(service)...)
 
 	if !isServiceEnabled(service) {
 		return errors
 	}
 
-	errors = append(errors, validateCommand(&service)...)
-	errors = append(errors, validateScripts(&service)...)
-	errors = append(errors, validateLogFile(&service)...)
-	errors = append(errors, validateWaitAfter(&service)...)
-	errors = append(errors, validateUser(&service)...)
-	errors = append(errors, validateHealthCheck(&service)...)
-	errors = append(errors, validateRestartPolicy(&service)...)
-	errors = append(errors, validateEnvFile(&service)...)
+	errors = append(errors, validateCommand(service)...)
+	errors = append(errors, validateScripts(service)...)
+	errors = append(errors, validateLogFile(service)...)
+	errors = append(errors, validateWaitAfter(service)...)
+	errors = append(errors, validateUser(service)...)
+	errors = append(errors, validateHealthCheck(service)...)
+	errors = append(errors, validateRestartPolicy(service)...)
+	errors = append(errors, validateEnvFile(service)...)
 
 	return errors
 }
@@ -252,11 +252,17 @@ func validateUser(service *Service) ValidationErrors {
 	var errors ValidationErrors
 
 	if service.User != "" {
-		if _, err := exec.Command("id", service.User).Output(); err != nil {
+		if _, _, err := lookupUserCredential(service.User); err != nil {
 			errors = append(errors, ValidationError{
 				Field:   "user",
 				Service: service.Name,
 				Message: fmt.Sprintf("user '%s' does not exist", service.User),
+			})
+		} else if os.Geteuid() != 0 {
+			errors = append(errors, ValidationError{
+				Field:   "user",
+				Service: service.Name,
+				Message: fmt.Sprintf("running services as user '%s' requires root privileges", service.User),
 			})
 		}
 	}
@@ -388,44 +394,28 @@ func validateDependencies(services []Service) error {
 	for i := range services {
 		service := &services[i]
 		serviceMap[service.Name] = *service
-		enabledMap[service.Name] = isServiceEnabled(*service)
+		enabledMap[service.Name] = isServiceEnabled(service)
 	}
 
 	for i := range services {
 		service := &services[i]
-		if !isServiceEnabled(*service) {
+		if !isServiceEnabled(service) {
 			continue
 		}
 
-		for _, dep := range service.DependsOn {
-			if _, exists := serviceMap[dep]; !exists {
-				return fmt.Errorf("service '%s' depends on non-existent service '%s'", service.Name, dep)
-			}
-			if !enabledMap[dep] {
-				return fmt.Errorf("service '%s' depends on disabled service '%s'", service.Name, dep)
-			}
+		if err := validateDependencyRefs(service, serviceMap, enabledMap); err != nil {
+			return err
 		}
 
-		if service.WaitAfter != nil && service.WaitAfter.IsPerDep {
-			for depName := range service.WaitAfter.PerDep {
-				found := false
-				for _, dep := range service.DependsOn {
-					if dep == depName {
-						found = true
-						break
-					}
-				}
-				if !found {
-					return fmt.Errorf("service '%s' has wait_after for '%s' but doesn't depend on it", service.Name, depName)
-				}
-			}
+		if err := validateWaitAfterRefs(service); err != nil {
+			return err
 		}
 	}
 
 	enabledServiceMap := make(map[string]Service)
 	for i := range services {
 		service := &services[i]
-		if isServiceEnabled(*service) {
+		if isServiceEnabled(service) {
 			enabledServiceMap[service.Name] = *service
 		}
 	}
@@ -439,7 +429,39 @@ func validateDependencies(services []Service) error {
 	return nil
 }
 
-func isServiceEnabled(service Service) bool {
+func validateDependencyRefs(service *Service, serviceMap map[string]Service, enabledMap map[string]bool) error {
+	for _, dep := range service.DependsOn {
+		if _, exists := serviceMap[dep]; !exists {
+			return fmt.Errorf("service '%s' depends on non-existent service '%s'", service.Name, dep)
+		}
+		if !enabledMap[dep] {
+			return fmt.Errorf("service '%s' depends on disabled service '%s'", service.Name, dep)
+		}
+	}
+	return nil
+}
+
+func validateWaitAfterRefs(service *Service) error {
+	if service.WaitAfter == nil || !service.WaitAfter.IsPerDep {
+		return nil
+	}
+
+	for depName := range service.WaitAfter.PerDep {
+		found := false
+		for _, dep := range service.DependsOn {
+			if dep == depName {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("service '%s' has wait_after for '%s' but doesn't depend on it", service.Name, depName)
+		}
+	}
+	return nil
+}
+
+func isServiceEnabled(service *Service) bool {
 	if service.Enabled == nil {
 		return true
 	}

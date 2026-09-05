@@ -1,0 +1,11 @@
+tag: v0.1.1
+title: Initial stable release
+
+features:
+  - "First stable LTS release of go-overlay"
+  - "Graceful shutdown and IPC"
+  - "Config validation and PTY logs"
+  - "Dependency management"
+  - "Pre and pos scripts"
+  - "Restart services"
+  - "Support for running services as a specific user"

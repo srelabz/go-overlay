@@ -8,10 +8,17 @@ Go-based service supervisor for containers. Run multiple services with dependenc
 FROM debian:bookworm-slim
 
 ADD https://github.com/corebunker/go-overlay/releases/latest/download/go-overlay /go-overlay
-RUN chmod +x /go-overlay
+RUN chmod 0755 /go-overlay
 
 COPY services.toml /services.toml
 ENTRYPOINT ["/go-overlay"]
+```
+
+Every release also publishes `go-overlay.sha256`. To verify the download:
+
+```dockerfile
+ARG BINARY_SHA256=<sha256 from the release page>
+RUN echo "${BINARY_SHA256}  /go-overlay" | sha256sum -c -
 ```
 
 ```toml
@@ -39,20 +46,31 @@ docker run myapp
 - **Health Checks**: HTTP endpoint or command-based monitoring
 - **Restart Policies**: `never`, `on-failure`, `always` with max attempts
 - **Environment**: Inline `env`, `env_file`, runtime overrides via `GO_OVERLAY_ENABLE_*`
-- **Graceful Shutdown**: SIGTERM → wait → SIGKILL with configurable timeouts
+- **Graceful Shutdown**: SIGTERM → wait → SIGKILL of the whole process group, with configurable timeouts
 - **Pre/Post Scripts**: Run scripts before/after service lifecycle
-- **User Switching**: Run services as specific users
+- **User Switching**: Run services as specific users via setuid/setgid
+- **PID 1 Ready**: Reaps orphaned processes when running as PID 1
 - **CLI Management**: `list`, `status`, `restart` via IPC
 
 ## CLI
 
 ```bash
-go-overlay                    # Start supervisor (reads /services.toml)
-go-overlay list               # List services with status, PID, uptime
-go-overlay status             # Show system summary
-go-overlay restart <service>  # Restart a service
-go-overlay install            # Install CLI to /usr/local/bin/
+go-overlay                       # Start supervisor (reads /services.toml)
+go-overlay --config /app/s.toml  # Start with a different config file
+go-overlay --debug               # Start with environment dump (secrets redacted)
+go-overlay list                  # List services with status, PID, uptime
+go-overlay status                # Show system summary
+go-overlay restart <service>     # Restart a service
+go-overlay install               # Install CLI to /usr/local/bin/
 ```
+
+The supervisor exits with status `1` when a `required` service fails, so container
+orchestrators see the failure. A signal-driven shutdown exits with `0`.
+
+The CLI talks to the supervisor over a Unix socket at `/run/go-overlay.sock`
+(falling back to `/tmp/go-overlay.sock` when `/run` is not writable). The socket is
+created with mode `0600`, so only the user running the supervisor can control it.
+Override the location with `GO_OVERLAY_SOCKET`.
 
 ## Configuration
 
@@ -78,7 +96,8 @@ required = false                        # Shutdown system on failure (default: f
 oneshot = false                         # Run once, ready after exit 0 (default: false)
 depends_on = ["db", "redis"]            # Wait for these services
 wait_after = 3                          # Seconds after deps ready (or map: { db = 5, redis = 2 })
-user = "appuser"                        # Run as this user
+user = "appuser"                        # Run as this user (requires root; no shell involved)
+log_file = "/var/log/api.log"           # Redirect stdout/stderr to a file instead of the PTY
 pre_script = "/scripts/init.sh"         # Run before start
 pos_script = "/scripts/cleanup.sh"      # Run after start
 env = { KEY = "value" }                 # Inline env vars
@@ -105,6 +124,17 @@ GO_OVERLAY_DISABLE_CADDY_FRONTEND=true go-overlay        # Disable specific serv
 ```
 
 Service names are uppercased with non-alphanumeric chars replaced by `_`.
+
+## Supervisor Environment
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `GO_OVERLAY_SOCKET` | `/run/go-overlay.sock` | IPC socket path used by the CLI |
+| `GO_OVERLAY_AUTO_INSTALL` | unset (off) | Symlink the binary into `/usr/local/bin` at startup |
+| `GO_OVERLAY_ONLY_SERVICES` | unset | Comma-separated allowlist of services to start |
+
+Auto-install is opt-in. Run `go-overlay install` explicitly, or set
+`GO_OVERLAY_AUTO_INSTALL=true` to restore the previous startup behavior.
 
 ## Complete Example
 
