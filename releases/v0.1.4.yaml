@@ -1,0 +1,13 @@
+tag: v0.1.4
+title: Codebase refactoring and project structure
+
+highlights: |
+  The monolithic entry point was split into focused files under
+  `cmd/go-overlay/`, following the standard Go project layout.
+
+changes:
+  - "Split the monolithic `main.go` (~2450 lines) into 10 files organized by responsibility"
+  - "Moved all Go sources to `cmd/go-overlay/`"
+  - "Removed inline comments in favour of self-documenting code"
+  - "Updated build paths in `tasks.py` for the new layout"
+  - "No CI change required: the `./...` glob keeps working for test, vet and lint"

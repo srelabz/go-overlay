@@ -16,7 +16,7 @@ const (
 func loadEnvFile(filePath string) (map[string]string, error) {
 	env := make(map[string]string)
 
-	file, err := os.Open(filePath)
+	file, err := os.Open(filePath) // #nosec G304
 	if err != nil {
 		return nil, err
 	}
@@ -40,7 +40,29 @@ func loadEnvFile(filePath string) (map[string]string, error) {
 	return env, scanner.Err()
 }
 
-func buildServiceEnv(service Service) []string {
+func overrideEnv(env []string, overrides map[string]string) []string {
+	result := make([]string, 0, len(env)+len(overrides))
+	for _, entry := range env {
+		key, _, found := strings.Cut(entry, "=")
+		if found {
+			if _, replaced := overrides[key]; replaced {
+				continue
+			}
+		}
+		result = append(result, entry)
+	}
+
+	for key, value := range overrides {
+		if value == "" {
+			continue
+		}
+		result = append(result, key+"="+value)
+	}
+
+	return result
+}
+
+func buildServiceEnv(service *Service) []string {
 	env := os.Environ()
 	envMap := make(map[string]string)
 
@@ -82,7 +104,7 @@ func applyServiceEnvOverrides(config *Config) {
 
 	for i := range config.Services {
 		service := &config.Services[i]
-		enabled := isServiceEnabled(*service)
+		enabled := isServiceEnabled(service)
 
 		if onlyMode {
 			_, enabled = onlyServices[strings.ToLower(service.Name)]
@@ -157,7 +179,7 @@ func serviceEnvToken(serviceName string) string {
 	return strings.Trim(b.String(), "_")
 }
 
-func parseBoolEnv(value string) (bool, bool) {
+func parseBoolEnv(value string) (parsed, valid bool) {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "1", "true", "yes", "on", "y":
 		return true, true
@@ -168,18 +190,41 @@ func parseBoolEnv(value string) (bool, bool) {
 	}
 }
 
-func _printEnvVariables() {
-	_info("Function entry logged.")
-	_debug(true, "| ---------------- START - ENVIRONMENT VARS ---------------- |")
+var sensitiveEnvMarkers = []string{
+	"PASSWORD", "PASSWD", "SECRET", "TOKEN", "APIKEY", "API_KEY",
+	"PRIVATE", "CREDENTIAL", "SESSION", "AUTH", "SIGNATURE", "CERT",
+}
 
-	envVars := os.Environ()
-	for i, env := range envVars {
-		if i == len(envVars)-1 {
-			fmt.Printf("%s", env)
-		} else {
-			fmt.Printf("%s\n", env)
+func isSensitiveEnvKey(key string) bool {
+	upper := strings.ToUpper(key)
+	for _, marker := range sensitiveEnvMarkers {
+		if strings.Contains(upper, marker) {
+			return true
 		}
 	}
+	return strings.HasSuffix(upper, "_KEY") || upper == "KEY"
+}
 
-	_debug(true, "| ---------------- CLOSE - ENVIRONMENT VARS ---------------- |")
+func maskEnvEntry(entry string) string {
+	key, value, found := strings.Cut(entry, "=")
+	if !found {
+		return entry
+	}
+	if !isSensitiveEnvKey(key) {
+		return entry
+	}
+	if value == "" {
+		return key + "="
+	}
+	return fmt.Sprintf("%s=<redacted:%d chars>", key, len(value))
+}
+
+func _printEnvVariables() {
+	_debug("| ---------------- START - ENVIRONMENT VARS ---------------- |")
+
+	for _, entry := range os.Environ() {
+		_printLine(maskEnvEntry(entry))
+	}
+
+	_debug("| ---------------- CLOSE - ENVIRONMENT VARS ---------------- |")
 }

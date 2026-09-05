@@ -1,0 +1,17 @@
+tag: v0.1.2
+title: Performance and code quality improvements
+
+highlights: |
+  Loop and struct layout tuning, lower cyclomatic complexity, and a cleaner
+  sub-table syntax for `wait_after`. All existing configurations stay valid.
+
+features:
+  - "`wait_after` accepts a TOML sub-table with a per-dependency wait time (recommended form)"
+
+changes:
+  - "Optimized loops to avoid unnecessary memory copies (168 bytes per iteration)"
+  - "Improved struct memory alignment (15-20% memory savings)"
+  - "Reduced cyclomatic complexity in key functions (26 to 5, 24 to 8)"
+  - "Removed unused functions and fixed linter warnings"
+  - "Added test cases and improved coverage"
+  - "Updated all examples to the sub-table format"

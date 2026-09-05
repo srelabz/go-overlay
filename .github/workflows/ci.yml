@@ -25,7 +25,7 @@ jobs:
       - name: 🔧 Setup Go
         uses: actions/setup-go@v5
         with: 
-          go-version: '1.24.8'
+          go-version: '1.27.1'
 
       - name: 🐍 Setup Python
         uses: actions/setup-python@v5
@@ -34,6 +34,9 @@ jobs:
 
       - name: 📦 Install Python dependencies
         run: pip install invoke python-dotenv boto3 minio requests
+
+      - name: 📝 Test release notes engine
+        run: python .github/scripts/test_release.py
 
       - name: 🧪 Run CI Pipeline (test + security + build)
         run: invoke ci.ci-full
