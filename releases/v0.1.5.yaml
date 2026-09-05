@@ -34,6 +34,7 @@ changes:
   - "gosec and govulncheck are pinned in the pipeline; `.golangci.yml` migrated to the v2 schema and runs clean"
   - "Release notes moved to `releases/<tag>.yaml`, published by the pipeline as the release body"
   - "Test coverage raised from 33.7% to 49.7%, with unit and integration suites passing under the race detector"
+  - "README rewritten for discoverability: what problem the supervisor solves, a comparison against s6-overlay, supervisord and tini, use cases and a FAQ"
 
 breaking:
   - "Services with `user` receive their arguments literally; configurations that relied on shell quoting through `su` need adjusting"

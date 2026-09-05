@@ -1,6 +1,19 @@
-# Go Overlay
+# go-overlay
 
-Go-based service supervisor for containers. Run multiple services with dependencies, health checks, restart policies, and graceful shutdown.
+**Init system and process supervisor for Docker containers.** Run multiple services
+in a single container with startup ordering, health checks, restart policies,
+graceful shutdown and PID 1 zombie reaping. One static Go binary, one TOML file, no
+runtime dependencies.
+
+[![CI](https://github.com/corebunker/go-overlay/actions/workflows/ci.yml/badge.svg)](https://github.com/corebunker/go-overlay/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/corebunker/go-overlay?sort=semver)](https://github.com/corebunker/go-overlay/releases/latest)
+[![Go](https://img.shields.io/badge/Go-1.27-00ADD8?logo=go&logoColor=white)](https://go.dev)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
+
+Drop it in as your container `ENTRYPOINT` and it supervises everything else: an API,
+a worker, a database, a reverse proxy, migrations that must finish first. It is a
+lightweight alternative to s6-overlay and supervisord, and it replaces tini when you
+need more than signal forwarding.
 
 ## Quick Start
 
@@ -51,6 +64,63 @@ docker run myapp
 - **User Switching**: Run services as specific users via setuid/setgid
 - **PID 1 Ready**: Reaps orphaned processes when running as PID 1
 - **CLI Management**: `list`, `status`, `restart` via IPC
+
+## Why go-overlay
+
+A Docker image runs one command. The moment you need a second process next to it, an
+API plus a worker, a web server plus a background job, a migration that must finish
+before the app boots, you are writing a shell script as PID 1. Shell scripts do not
+forward signals correctly, do not reap zombies, do not restart a crashed process, and
+do not know that the API should wait for Postgres.
+
+go-overlay is that missing piece, in one static binary:
+
+- **Correct PID 1 behavior**: reaps orphaned processes so long-lived containers do not
+  leak zombies, and forwards termination to the whole process group.
+- **Startup ordering**: `depends_on` plus `wait_after` for services that must come up
+  in a specific order.
+- **One-shot jobs**: run database migrations or seed scripts to completion before the
+  services that depend on them start.
+- **Health checks**: HTTP endpoint or shell command, with retries and restart on
+  failure.
+- **Graceful shutdown**: SIGTERM, wait, then SIGKILL, with per-service and global
+  timeouts, so a `docker stop` does not corrupt state.
+- **Runtime control**: `go-overlay list`, `status` and `restart <service>` inside the
+  running container.
+
+## Comparison
+
+| | go-overlay | s6-overlay | supervisord | tini |
+|---|---|---|---|---|
+| Added to the image | one static binary (~8 MB) | s6 suite + execline | Python runtime + package | one small binary |
+| Configuration | single TOML file | service directories and scripts | INI file | none |
+| Supervises many services | yes | yes | yes | no, single process |
+| Startup ordering | `depends_on`, `wait_after` | dependency files | `priority` | n/a |
+| One-shot jobs | `oneshot = true` | oneshot service type | no | n/a |
+| Built-in health checks | HTTP and command | no | no, needs event listeners | n/a |
+| Restart policies | never, on-failure, always, `max_restarts` | yes | yes | n/a |
+| Reaps orphan processes as PID 1 | yes | yes | yes | yes |
+| Graceful shutdown timeouts | per service and global | yes | yes | signal forwarding only |
+| Runtime CLI | `list`, `status`, `restart` | `s6-svc` | `supervisorctl` | n/a |
+| Language | Go | C and execline | Python | C |
+
+Pick s6-overlay when you want a battle-tested supervision suite and do not mind its
+learning curve. Pick tini when you truly have a single process. Pick go-overlay when
+you want several services described in one readable file, with no interpreter added
+to the image.
+
+## Use Cases
+
+- **Full stack in one container**: API, frontend and Caddy or Nginx behind one image,
+  the way the `examples/` directory shows.
+- **Migrations before boot**: run `migrate up` as a one-shot job and let the API wait
+  for it.
+- **Legacy applications**: an app that expects cron, a log shipper or a queue worker
+  alongside it.
+- **Development and CI images**: reproduce a small production topology without
+  docker-compose or Kubernetes.
+- **Edge and on-premise**: single-host deployments where a full orchestrator is more
+  machinery than the workload deserves.
 
 ## CLI
 
@@ -212,6 +282,95 @@ mise exec -- invoke quality.fmt    # Format code
 mise exec -- invoke --list         # All tasks
 ```
 
+## FAQ
+
+### How do I run multiple processes in a Docker container?
+
+Set go-overlay as the `ENTRYPOINT` and describe each process in `/services.toml`. It
+starts them, keeps them alive, streams their logs with a prefix per service, and stops
+them cleanly when the container is asked to shut down. See [Quick Start](#quick-start).
+
+### Is running more than one service per container bad practice?
+
+The one-process-per-container rule exists because Docker only supervises PID 1. When
+several processes genuinely belong to the same unit of deployment, a supervisor that
+handles signals, restarts and reaping gives you the same guarantees inside a single
+image. That is what go-overlay provides.
+
+### Do I still need tini or an init process?
+
+No. When go-overlay runs as PID 1 it reaps orphaned processes itself, so you do not
+need `docker run --init` or tini in the image.
+
+### How is this different from s6-overlay?
+
+Same job, different trade-offs. s6-overlay is a mature supervision suite configured
+through service directories and execline scripts. go-overlay is a single Go binary
+configured by one TOML file, with health checks and dependency ordering built in. See
+the [comparison table](#comparison).
+
+### How do I wait for a database before starting the API?
+
+Declare the dependency and, if the service needs a grace period after the dependency
+reports ready, add `wait_after`:
+
+```toml
+[[services]]
+name = "api"
+depends_on = ["postgres"]
+wait_after = { postgres = 3 }
+```
+
+### How do I run database migrations before the application?
+
+Mark the migration as a one-shot job. Dependents wait until it exits successfully:
+
+```toml
+[[services]]
+name = "migrate"
+command = "/app/migrate"
+args = ["up"]
+oneshot = true
+```
+
+### What happens when a service crashes?
+
+It follows the service `restart` policy: `never`, `on-failure` or `always`, bounded by
+`max_restarts` and spaced by `restart_delay`. If the service is marked `required`, the
+supervisor shuts everything down and exits with status 1 so your orchestrator restarts
+the container.
+
+### Can services run as a non-root user?
+
+Yes. Set `user = "appuser"` and the process is started with that user's uid, gid and
+supplementary groups. The supervisor itself must run as root to switch users.
+
+### How do I inspect services inside a running container?
+
+```bash
+docker exec -it mycontainer go-overlay list
+docker exec -it mycontainer go-overlay status
+docker exec -it mycontainer go-overlay restart api
+```
+
+### Does it work outside Docker?
+
+Yes. It is a plain Linux binary, so it also supervises processes on a VM or a
+bare-metal host, but graceful shutdown and reaping are designed with containers in
+mind.
+
+## Contributing
+
+Issues and pull requests are welcome. The development workflow, the CI pipeline and
+the release process are documented in [docs/CI-CD-PIPELINE.md](./docs/CI-CD-PIPELINE.md).
+
 ## License
 
-MIT License - see LICENSE file.
+MIT License - see [LICENSE](./LICENSE) file.
+
+---
+
+**Keywords**: docker process supervisor, container init system, run multiple processes
+in one docker container, s6-overlay alternative, supervisord alternative, tini
+alternative, PID 1 zombie reaping, container service manager, docker entrypoint
+multiple services, graceful shutdown, health checks, service dependencies, Go, TOML.
