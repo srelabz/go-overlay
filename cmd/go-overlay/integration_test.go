@@ -7,7 +7,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"sync"
 	"testing"
 	"time"
 )
@@ -238,8 +237,8 @@ func TestIntegrationServiceLifecycle(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	shutdownCtx, shutdownCancel = context.WithCancel(context.Background())
-	defer shutdownCancel()
+	setShutdownContext(context.WithCancel(context.Background()))
+	defer cancelShutdown()
 
 	service := Service{
 		Name:    "test-service",
@@ -336,21 +335,15 @@ func TestIntegrationTimeouts(t *testing.T) {
 }
 
 func TestIntegrationWaitAfterDependencies(t *testing.T) {
-	shutdownCtx, shutdownCancel = context.WithCancel(context.Background())
-	defer shutdownCancel()
+	setShutdownContext(context.WithCancel(context.Background()))
+	defer cancelShutdown()
 
-	startedServices := make(map[string]bool)
-	failedServices := make(map[string]bool)
-	var mu sync.Mutex
-
-	mu.Lock()
-	startedServices["dep-service"] = true
-	mu.Unlock()
+	deps := newDependencyTracker()
+	deps.MarkReady("dep-service")
 
 	done := make(chan bool)
 	go func() {
-		result := waitForDependency("dep-service", 1, &mu, startedServices, failedServices, 10)
-		done <- result
+		done <- waitForDependency(deps, "dep-service", 1, 10)
 	}()
 
 	select {
@@ -414,7 +407,7 @@ func TestIntegrationLogFileService(t *testing.T) {
 		LogFile: logFile,
 	}
 
-	errs := validateService(service)
+	errs := validateService(&service)
 	if len(errs) > 0 {
 		t.Errorf("validateService() failed: %v", errs)
 	}
@@ -450,7 +443,7 @@ func TestIntegrationUserValidation(t *testing.T) {
 				User:    tt.user,
 			}
 
-			errs := validateService(service)
+			errs := validateService(&service)
 			hasError := len(errs) > 0
 
 			if tt.shouldErr && !hasError {

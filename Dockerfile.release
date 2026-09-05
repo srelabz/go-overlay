@@ -1,23 +1,29 @@
-FROM alpine:latest
+FROM alpine:3.24.1@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
 
 ARG VERSION=latest
+ARG BINARY_SHA256=""
 
 RUN apk --no-cache add ca-certificates tzdata bash curl procps
 
 WORKDIR /
 
-ADD https://github.com/corebunker/go-overlay/releases/${VERSION}/download/go-overlay /go-overlay
-
-RUN chmod +x /go-overlay
-
-COPY services.toml /services.toml
-
-RUN echo '#!/bin/bash\necho "Logger service started"\nwhile true; do\n  echo "$(date): Log entry from logger service"\n  sleep 5\ndone' > /scripts/logger.sh && \
-    chmod +x /scripts/logger.sh
-
-RUN echo '#!/bin/bash\necho "Background task started"\nwhile true; do\n  echo "$(date): Background task running..."\n  sleep 10\ndone' > /scripts/background-task.sh && \
-    chmod +x /scripts/background-task.sh
+RUN set -eu; \
+    if [ "${VERSION}" = "latest" ]; then \
+        url="https://github.com/corebunker/go-overlay/releases/latest/download/go-overlay"; \
+    else \
+        url="https://github.com/corebunker/go-overlay/releases/download/${VERSION}/go-overlay"; \
+    fi; \
+    echo "Downloading ${url}"; \
+    wget -qO /go-overlay "${url}"; \
+    if [ -n "${BINARY_SHA256}" ]; then \
+        echo "${BINARY_SHA256}  /go-overlay" | sha256sum -c -; \
+    else \
+        echo "WARNING: BINARY_SHA256 build arg not set, skipping checksum verification"; \
+    fi; \
+    chmod 0755 /go-overlay
 
 RUN mkdir -p /scripts
+
+COPY services.toml /services.toml
 
 ENTRYPOINT ["/go-overlay"]

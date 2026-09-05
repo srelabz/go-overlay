@@ -99,8 +99,28 @@ CI runs automatically on GitHub Actions when:
    - `go-overlay-linux-amd64` - Compiled binary
    - `services.toml` - Example configuration
    - `README.md` - Documentation
-5. **GitHub Upload**: Creates release on GitHub with binary
-6. **B2 Upload** (optional): Uploads to Backblaze B2 if configured
+5. **Release Notes**: Body comes from `releases/<tag>.yaml` (see `releases/README.md`)
+6. **GitHub Upload**: Creates release on GitHub with the binary and `go-overlay.sha256`
+7. **B2 Upload** (optional): Uploads to Backblaze B2 if configured
+
+#### Release Notes
+
+Each release ships hand-written notes committed as `releases/<tag>.yaml`:
+
+```bash
+$EDITOR releases/v0.1.6.yaml     # title, highlights, features, fixes, changes, breaking
+mise run ci:notes                # validate the notes engine and every shipped file
+git tag v0.1.6 && git push origin v0.1.6
+```
+
+Resolution order for the release body:
+
+1. `releases/<tag>.yaml` (or `.yml`)
+2. `RELEASE_BODY` environment variable
+3. Annotated tag message
+4. Conventional-commit subjects since the previous SemVer tag
+
+`releseases_notes.toml` is deprecated and no longer read.
 
 ### Running Locally
 
@@ -176,7 +196,7 @@ Security reports are saved in `dist/security/`:
 **GitHub Releases:**
 - Tag created automatically
 - Binary attached to release
-- Release notes generated
+- Release notes generated from `releases/<tag>.yaml`
 
 ## 🔧 Configuration
 

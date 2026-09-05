@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 )
@@ -259,15 +259,67 @@ func TestWaitAfterFieldGetWaitTime(t *testing.T) {
 }
 
 func TestWaitForDependencyFailed(t *testing.T) {
-	shutdownCtx, shutdownCancel = context.WithCancel(context.Background())
-	defer shutdownCancel()
+	setShutdownContext(context.WithCancel(context.Background()))
+	defer cancelShutdown()
 
-	startedServices := map[string]bool{}
-	failedServices := map[string]bool{"db-migration": true}
-	var mu sync.Mutex
+	deps := newDependencyTracker()
+	deps.MarkFailed("db-migration")
 
-	if waitForDependency("db-migration", 0, &mu, startedServices, failedServices, 2) {
+	if waitForDependency(deps, "db-migration", 0, 2) {
 		t.Error("waitForDependency() should return false when dependency is marked as failed")
+	}
+}
+
+func TestWaitForDependencyReady(t *testing.T) {
+	setShutdownContext(context.WithCancel(context.Background()))
+	defer cancelShutdown()
+
+	deps := newDependencyTracker()
+
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		deps.MarkReady("db")
+	}()
+
+	start := time.Now()
+	if !waitForDependency(deps, "db", 0, 5) {
+		t.Fatal("waitForDependency() should return true once dependency is ready")
+	}
+
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Errorf("waitForDependency() took %v, expected near-immediate wakeup", elapsed)
+	}
+}
+
+func TestWaitForDependencyTimeout(t *testing.T) {
+	setShutdownContext(context.WithCancel(context.Background()))
+	defer cancelShutdown()
+
+	deps := newDependencyTracker()
+
+	if waitForDependency(deps, "never-ready", 0, 1) {
+		t.Error("waitForDependency() should return false on timeout")
+	}
+}
+
+func TestDependencyTrackerIdempotent(t *testing.T) {
+	deps := newDependencyTracker()
+
+	deps.MarkReady("api")
+	deps.MarkReady("api")
+
+	if !deps.IsReady("api") {
+		t.Error("IsReady() should be true after MarkReady")
+	}
+	if deps.IsFailed("api") {
+		t.Error("IsFailed() should be false when only MarkReady was called")
+	}
+
+	deps.MarkFailed("worker")
+	deps.MarkFailed("worker")
+
+	if !deps.IsFailed("worker") {
+		t.Error("IsFailed() should be true after MarkFailed")
 	}
 }
 
@@ -325,7 +377,7 @@ func TestValidateService(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			errs := validateService(tt.service)
+			errs := validateService(&tt.service)
 
 			if tt.shouldErr && len(errs) == 0 {
 				t.Error("Expected errors but got none")
@@ -555,38 +607,6 @@ func TestFormatServiceName(t *testing.T) {
 	}
 }
 
-func TestJoinArgs(t *testing.T) {
-	tests := []struct {
-		name     string
-		args     []string
-		expected string
-	}{
-		{
-			name:     "Empty args",
-			args:     []string{},
-			expected: "",
-		},
-		{
-			name:     "Single arg",
-			args:     []string{"arg1"},
-			expected: "arg1",
-		},
-		{
-			name:     "Multiple args",
-			args:     []string{"arg1", "arg2", "arg3"},
-			expected: "arg1 arg2 arg3",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := joinArgs(tt.args); got != tt.expected {
-				t.Errorf("joinArgs() = %v, want %v", got, tt.expected)
-			}
-		})
-	}
-}
-
 func TestValidationError(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -686,13 +706,13 @@ func TestApplyServiceEnvOverrides(t *testing.T) {
 
 	applyServiceEnvOverrides(config)
 
-	if !isServiceEnabled(config.Services[0]) {
+	if !isServiceEnabled(&config.Services[0]) {
 		t.Error("backend should be enabled by GO_OVERLAY_ONLY_SERVICES")
 	}
-	if !isServiceEnabled(config.Services[1]) {
+	if !isServiceEnabled(&config.Services[1]) {
 		t.Error("frontend should be re-enabled by GO_OVERLAY_ENABLE_FRONTEND")
 	}
-	if isServiceEnabled(config.Services[2]) {
+	if isServiceEnabled(&config.Services[2]) {
 		t.Error("cache should be disabled by GO_OVERLAY_DISABLE_CACHE")
 	}
 }
@@ -717,10 +737,10 @@ func TestValidateConfigOnlyServicesSkipsRuntimeChecksForDisabledServices(t *test
 		t.Fatalf("validateConfig() returned unexpected error: %v", err)
 	}
 
-	if isServiceEnabled(config.Services[0]) {
+	if isServiceEnabled(&config.Services[0]) {
 		t.Error("frontend should be disabled by GO_OVERLAY_ONLY_SERVICES")
 	}
-	if !isServiceEnabled(config.Services[1]) {
+	if !isServiceEnabled(&config.Services[1]) {
 		t.Error("backend should be enabled by GO_OVERLAY_ONLY_SERVICES")
 	}
 }
@@ -765,7 +785,7 @@ func BenchmarkValidateService(b *testing.B) {
 		Command: "/bin/echo",
 	}
 	for i := 0; i < b.N; i++ {
-		validateService(service)
+		validateService(&service)
 	}
 }
 
@@ -945,9 +965,43 @@ dep2 = 20
 }
 
 func TestSocketPath(t *testing.T) {
-	expected := "/tmp/go-overlay.sock"
-	if socketPath != expected {
-		t.Errorf("socketPath = %v, want %v", socketPath, expected)
+	if socketPath != runSocketPath && socketPath != tmpSocketPath {
+		t.Errorf("socketPath = %v, want %v or %v", socketPath, runSocketPath, tmpSocketPath)
+	}
+}
+
+func TestResolveSocketPathEnvOverride(t *testing.T) {
+	custom := filepath.Join(t.TempDir(), "custom.sock")
+	t.Setenv(envSocketPath, custom)
+
+	if got := resolveSocketPath(); got != custom {
+		t.Errorf("resolveSocketPath() = %v, want %v", got, custom)
+	}
+}
+
+func TestIPCSocketPermissions(t *testing.T) {
+	setShutdownContext(context.WithCancel(context.Background()))
+	defer cancelShutdown()
+
+	original := socketPath
+	socketPath = filepath.Join(t.TempDir(), "go-overlay.sock")
+	defer func() {
+		_ = removeSocketFile()
+		socketPath = original
+	}()
+
+	if err := startIPCServer(); err != nil {
+		t.Fatalf("startIPCServer() failed: %v", err)
+	}
+	defer ipcServer.Close()
+
+	info, err := os.Stat(socketPath)
+	if err != nil {
+		t.Fatalf("could not stat socket: %v", err)
+	}
+
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Errorf("socket permissions = %o, want 600", perm)
 	}
 }
 
@@ -1098,7 +1152,7 @@ func TestBuildServiceEnv(t *testing.T) {
 		},
 	}
 
-	env := buildServiceEnv(service)
+	env := buildServiceEnv(&service)
 
 	found := false
 	for _, e := range env {
@@ -1477,7 +1531,7 @@ func BenchmarkBuildServiceEnv(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		buildServiceEnv(service)
+		buildServiceEnv(&service)
 	}
 }
 

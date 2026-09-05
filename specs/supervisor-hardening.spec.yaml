@@ -1,0 +1,83 @@
+spec: supervisor-hardening
+title: "Correcoes de lifecycle, seguranca e performance do supervisor"
+status: done
+created: 2026-09-05
+updated: 2026-09-05
+goal: "Supervisor sem crash-loop infinito, sem erro falso em exit limpo, sem perda de log e com IPC e execucao endurecidos"
+problem: "Auditoria encontrou 4 bugs high no nucleo de lifecycle mais riscos de seguranca em IPC, troca de usuario e imagem Docker"
+context: "Base go-overlay v0.1.3 apos upgrade para Go 1.27.1 em specs/toolchain-upgrade.spec.yaml"
+behavior:
+  - "max_restarts limita o numero total de reinicios por servico"
+  - "Saida limpa de processo nao gera SIGTERM nem segundo Wait"
+  - "Linha de log maior que o buffer nao interrompe o stream do servico"
+  - "restart via IPC responde imediato e nao vaza o WaitGroup de shutdown"
+  - "Parada envia sinal ao process group, matando netos"
+  - "Supervisor como PID 1 faz reaping de orfaos"
+  - "Servico com log_file e realmente iniciado, com stdout e stderr no arquivo"
+  - "Falha de servico required faz o processo sair com codigo 1"
+requirements_functional:
+  - "Politicas restart never, on-failure e always continuam validas"
+  - "CLI list, status, restart e install seguem funcionando"
+requirements_non_functional:
+  - "go test unit e integration verdes, inclusive com -race"
+  - "gosec sem issues e govulncheck sem vulnerabilidades"
+  - "golangci-lint v2 sem findings"
+constraints:
+  - "Sem comentarios em codigo, exceto pragmas nosec e build tags"
+  - "Sem commit ou push sem pedido do usuario"
+  - "Sem alterar VERSION nem release notes"
+implemented:
+  - "Contadores de restart por nome em restart.go, nao mais no ServiceProcess"
+  - "Um unico waiter por processo com canal de resultado e stopIntent atomico"
+  - "streamServiceLogs com bufio.Reader e ReadSlice, sem descartar linha longa"
+  - "dependencyTracker com canais, substituindo poll de 2 segundos"
+  - "Troca de usuario via syscall.Credential, sem su e sem shell"
+  - "Reaper de orfaos com waitid WNOWAIT e registro de filhos rastreados"
+  - "Socket em /run com modo 0600, deadline e limite de request"
+  - "gracefulShutdown com sync.Once, timeout da config e exit code 1 em falha required"
+  - "Dockerfiles com alpine pinada por digest, verificacao sha256 e mkdir corrigido"
+  - "release.py publica go-overlay.sha256 e builda com trimpath"
+  - "golangci-lint migrado para schema v2 e config valida"
+pending:
+  - "Reset do contador de restart apos periodo estavel de uptime"
+  - "Suporte a reaping em arquiteturas fora de linux amd64 e arm64"
+steps:
+  - id: lifecycle-core
+    desc: "Corrigir max_restarts, duplo Wait, stream de log e tracker de dependencias"
+    status: done
+    verify: "mise exec -- go test -run 'TestRestartCounters|TestStartServiceCleanExit|TestStreamServiceLogs|TestWaitForDependency' -timeout 60s ./..."
+  - id: ipc-hardening
+    desc: "Socket 0600 em /run, deadlines e restart sem segurar mutex"
+    status: done
+    verify: "mise exec -- go test -run 'TestIPCSocketPermissions|TestHandleRestartService|TestResolveSocketPath' -timeout 60s ./..."
+  - id: process-safety
+    desc: "Sinal por process group, reaper de orfaos e execucao sem su"
+    status: done
+    verify: "mise exec -- go test -tags=integration -run 'TestIntegrationStopKillsProcessGroup|TestIntegrationMaxRestarts|TestIntegrationUnhealthy' -timeout 3m ./..."
+  - id: race-clean
+    desc: "Suites unit e integration sem data race"
+    status: done
+    verify: "mise exec -- go test -race -timeout 3m ./... && mise exec -- go test -race -tags=integration -timeout 5m ./..."
+  - id: static-analysis
+    desc: "gosec, govulncheck e golangci-lint v2 limpos"
+    status: done
+    verify: "mise exec -- govulncheck ./... && mise exec -- golangci-lint run --timeout 5m ./..."
+  - id: supply-chain
+    desc: "Docker pinado com checksum e release publicando sha256"
+    status: done
+    verify: "grep -q 'alpine:3.24.1@sha256:' Dockerfile && grep -q 'sha256sum -c' Dockerfile.release && grep -q 'checksum_name' .github/scripts/release.py"
+acceptance:
+  - desc: "mise run ci:test passa com o supervisor corrigido"
+    status: done
+    note: "mise run ci:test verde, cobertura 49.7%"
+decisions:
+  - "Contador de restart e monotonico por nome enquanto o supervisor vive; restart manual via CLI zera o contador"
+  - "Restart pedido pela CLI nao conta contra max_restarts; restart por health check conta"
+  - "log_file agora redireciona o processo em vez de apenas seguir o arquivo, porque o servico nunca era iniciado nesse modo"
+  - "auto install virou opt-in via GO_OVERLAY_AUTO_INSTALL para nao escrever symlink a cada boot"
+  - "gosec G204 e G304 marcados com pragma nosec: supervisor executa comandos e arquivos definidos na config por design"
+  - "shutdownCtx e globalConfig passaram a ter acessores com mutex, eliminando data race detectada nos testes"
+  - "Scripts recebem chmod apenas quando ainda nao sao executaveis, em vez de a cada start"
+risks:
+  - "Servicos com user= que dependiam de quoting do shell mudam de semantica, agora argumentos sao passados literalmente"
+  - "Reaper usa syscall waitid direto, limitado a linux amd64 e arm64; demais plataformas usam stub sem reaping"

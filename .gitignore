@@ -16,6 +16,7 @@ vendor/
 .idea/
 *.iml
 .vscode/
+*.code-workspace
 *.swp
 *.swo
 *~
@@ -27,6 +28,7 @@ Thumbs.db
 *.trace
 
 coverage.out
+coverage/
 
 docker-compose.override.yml
 .env

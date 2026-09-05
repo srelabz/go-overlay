@@ -1,0 +1,58 @@
+spec: toolchain-upgrade
+title: "Upgrade Go 1.24.8 -> 1.27.1 e libs"
+status: done
+created: 2026-09-05
+updated: 2026-09-05
+goal: "Projeto compila, testa e passa scans com Go 1.27.1 e dependencias atuais"
+problem: "go.mod/mise/CI fixos em Go 1.24.8; cobra 1.8.1, go-toml 2.2.3, pflag 1.0.5 desatualizados"
+context: "Supervisor PID 1 para containers; binario estatico CGO_ENABLED=0"
+behavior:
+  - "mise exec usa Go 1.27.1 no repo"
+  - "CI (ci.yml, release.yml) usa setup-go 1.27.1"
+  - "Binario linux estatico builda e responde --help"
+requirements_functional:
+  - "Sem mudanca de comportamento em runtime"
+requirements_non_functional:
+  - "Testes unit, race e integration verdes"
+  - "govulncheck sem vulnerabilidades"
+  - "gosec sem findings HIGH (gate do CI)"
+constraints:
+  - "Nao alterar VERSION nem release notes sem pedido"
+  - "Nao commitar; alteracoes ficam no working tree"
+implemented:
+  - "mise.toml go = 1.27"
+  - "go.mod go 1.27.1; cobra 1.10.2; go-toml 2.4.3; pflag 1.0.10; pty 1.1.24 (ja latest)"
+  - "ci.yml e release.yml go-version 1.27.1"
+pending:
+  - "Bump de VERSION/release notes quando houver release"
+steps:
+  - id: bump-go
+    desc: "Go 1.27.1 em mise.toml, go.mod e workflows"
+    status: done
+    verify: "grep -q 'go 1.27.1' go.mod && grep -q 'go = .1.27.' mise.toml && grep -q 'go-version: .1.27.1.' .github/workflows/ci.yml && grep -q 'go-version: .1.27.1.' .github/workflows/release.yml"
+  - id: bump-libs
+    desc: "cobra 1.10.2, go-toml 2.4.3, pflag 1.0.10, go mod tidy"
+    status: done
+    verify: "grep -q 'cobra v1.10.2' go.mod && grep -q 'go-toml/v2 v2.4.3' go.mod && grep -q 'pflag v1.0.10' go.mod"
+  - id: tests
+    desc: "Unit, race e integration verdes com Go 1.27.1"
+    status: done
+    verify: "mise exec -- go vet ./... && mise exec -- go test -timeout 60s ./... && mise exec -- go test -tags=integration -timeout 2m ./..."
+  - id: security-scan
+    desc: "govulncheck limpo; gosec sem HIGH"
+    status: done
+    verify: "mise exec -- govulncheck ./..."
+  - id: build
+    desc: "Binario linux estatico"
+    status: done
+    verify: "CGO_ENABLED=0 GOOS=linux mise exec -- go build -o go-overlay_unix ./cmd/go-overlay && ./go-overlay_unix --help >/dev/null"
+acceptance:
+  - desc: "mise run ci:test passa com Go 1.27.1"
+    status: done
+decisions:
+  - "go.mod pinado em patch (1.27.1) seguindo convencao anterior (1.24.8)"
+  - "gosec MEDIUM G204/G304 aceitos: supervisor executa comandos/arquivos configurados por design; gate CI permanece HIGH"
+  - "Deps transitivas de teste do cobra (go-md2man, yaml) nao forcadas: fora do grafo de build"
+  - "Achados de seguranca/performance documentados em docs/plans/2026-09-05-security-performance-audit.yaml, nao corrigidos nesta spec"
+risks:
+  - "setup-go no CI baixa 1.27.1; runner ubuntu-latest ok"

@@ -91,24 +91,24 @@ const (
 )
 
 type Service struct {
+	Env          map[string]string  `toml:"env,omitempty"`
+	WaitAfter    *WaitAfterField    `toml:"wait_after,omitempty"`
+	Enabled      *bool              `toml:"enabled,omitempty"`
+	HealthCheck  *HealthCheckConfig `toml:"health_check,omitempty"`
 	Name         string             `toml:"name"`
 	Command      string             `toml:"command"`
 	LogFile      string             `toml:"log_file,omitempty"`
 	PreScript    string             `toml:"pre_script,omitempty"`
 	PosScript    string             `toml:"pos_script,omitempty"`
 	User         string             `toml:"user,omitempty"`
+	Restart      RestartPolicy      `toml:"restart,omitempty"`
+	EnvFile      string             `toml:"env_file,omitempty"`
 	Args         []string           `toml:"args"`
 	DependsOn    DependsOnField     `toml:"depends_on,omitempty"`
-	WaitAfter    *WaitAfterField    `toml:"wait_after,omitempty"`
-	Enabled      *bool              `toml:"enabled,omitempty"`
-	Required     bool               `toml:"required,omitempty"`
-	Oneshot      bool               `toml:"oneshot,omitempty"`
-	HealthCheck  *HealthCheckConfig `toml:"health_check,omitempty"`
-	Restart      RestartPolicy      `toml:"restart,omitempty"`
 	RestartDelay int                `toml:"restart_delay,omitempty"`
 	MaxRestarts  int                `toml:"max_restarts,omitempty"`
-	Env          map[string]string  `toml:"env,omitempty"`
-	EnvFile      string             `toml:"env_file,omitempty"`
+	Required     bool               `toml:"required,omitempty"`
+	Oneshot      bool               `toml:"oneshot,omitempty"`
 }
 
 type Config struct {
@@ -117,24 +117,24 @@ type Config struct {
 }
 
 type serviceRaw struct {
+	DependsOn    interface{}        `toml:"depends_on,omitempty"`
+	WaitAfter    interface{}        `toml:"wait_after,omitempty"`
+	Env          map[string]string  `toml:"env,omitempty"`
+	Enabled      *bool              `toml:"enabled,omitempty"`
+	HealthCheck  *HealthCheckConfig `toml:"health_check,omitempty"`
 	Name         string             `toml:"name"`
 	Command      string             `toml:"command"`
 	LogFile      string             `toml:"log_file,omitempty"`
 	PreScript    string             `toml:"pre_script,omitempty"`
 	PosScript    string             `toml:"pos_script,omitempty"`
 	User         string             `toml:"user,omitempty"`
-	Args         []string           `toml:"args"`
-	DependsOn    interface{}        `toml:"depends_on,omitempty"`
-	WaitAfter    interface{}        `toml:"wait_after,omitempty"`
-	Enabled      *bool              `toml:"enabled,omitempty"`
-	Required     bool               `toml:"required,omitempty"`
-	Oneshot      bool               `toml:"oneshot,omitempty"`
-	HealthCheck  *HealthCheckConfig `toml:"health_check,omitempty"`
 	Restart      string             `toml:"restart,omitempty"`
+	EnvFile      string             `toml:"env_file,omitempty"`
+	Args         []string           `toml:"args"`
 	RestartDelay int                `toml:"restart_delay,omitempty"`
 	MaxRestarts  int                `toml:"max_restarts,omitempty"`
-	Env          map[string]string  `toml:"env,omitempty"`
-	EnvFile      string             `toml:"env_file,omitempty"`
+	Required     bool               `toml:"required,omitempty"`
+	Oneshot      bool               `toml:"oneshot,omitempty"`
 }
 
 type configRaw struct {

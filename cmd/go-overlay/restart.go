@@ -2,8 +2,34 @@ package main
 
 import (
 	"fmt"
+	"sync"
 	"time"
 )
+
+var (
+	restartMu     sync.Mutex
+	restartCounts = make(map[string]int)
+	serviceDeps   *dependencyTracker
+)
+
+func restartCount(name string) int {
+	restartMu.Lock()
+	defer restartMu.Unlock()
+	return restartCounts[name]
+}
+
+func incrementRestartCount(name string) int {
+	restartMu.Lock()
+	defer restartMu.Unlock()
+	restartCounts[name]++
+	return restartCounts[name]
+}
+
+func resetRestartCount(name string) {
+	restartMu.Lock()
+	defer restartMu.Unlock()
+	delete(restartCounts, name)
+}
 
 func handleServiceExit(serviceProc *ServiceProcess, exitErr error) {
 	policy := serviceProc.Config.Restart
@@ -18,59 +44,82 @@ func handleServiceExit(serviceProc *ServiceProcess, exitErr error) {
 		shouldRestart = false
 	}
 
-	if serviceProc.Config.MaxRestarts > 0 &&
-		serviceProc.RestartCount >= serviceProc.Config.MaxRestarts {
+	maxRestarts := serviceProc.Config.MaxRestarts
+	if shouldRestart && maxRestarts > 0 && restartCount(serviceProc.Name) >= maxRestarts {
 		_warn(fmt.Sprintf("Service '%s' reached max restarts (%d), not restarting",
-			serviceProc.Name, serviceProc.Config.MaxRestarts))
-		shouldRestart = false
+			serviceProc.Name, maxRestarts))
+
+		if serviceProc.Config.Required {
+			_error(fmt.Sprintf("[CRITICAL] Required service '%s' exhausted restart attempts, initiating shutdown",
+				serviceProc.Name))
+			triggerServiceFailureShutdown()
+		}
+		return
 	}
 
 	if shouldRestart {
-		serviceProc.RestartCount++
+		attempt := incrementRestartCount(serviceProc.Name)
 		delay := serviceProc.Config.RestartDelay
-		if delay == 0 {
+		if delay <= 0 {
 			delay = 1
 		}
 
 		_info(fmt.Sprintf("Restarting service '%s' in %ds (attempt %d/%s)",
-			serviceProc.Name, delay, serviceProc.RestartCount,
-			formatMaxRestarts(serviceProc.Config.MaxRestarts)))
+			serviceProc.Name, delay, attempt,
+			formatMaxRestarts(maxRestarts)))
 
-		time.AfterFunc(time.Duration(delay)*time.Second, func() {
-			restartServiceInternal(serviceProc)
-		})
-	} else if serviceProc.Config.Required && exitErr != nil {
+		scheduleRestart(serviceProc, delay)
+		return
+	}
+
+	if serviceProc.Config.Required && exitErr != nil {
 		_error(fmt.Sprintf("[CRITICAL] Required service '%s' exited with error, initiating shutdown",
 			serviceProc.Name))
-		gracefulShutdown()
+		triggerServiceFailureShutdown()
 	}
 }
 
-func formatMaxRestarts(max int) string {
-	if max == 0 {
+func formatMaxRestarts(maxRestarts int) string {
+	if maxRestarts == 0 {
 		return "∞"
 	}
-	return fmt.Sprintf("%d", max)
+	return fmt.Sprintf("%d", maxRestarts)
+}
+
+func scheduleRestart(serviceProc *ServiceProcess, delaySeconds int) {
+	if delaySeconds < 0 {
+		delaySeconds = 0
+	}
+
+	ctx := shutdownContext()
+	time.AfterFunc(time.Duration(delaySeconds)*time.Second, func() {
+		if ctx.Err() != nil {
+			_info(fmt.Sprintf("Skipping restart of '%s' - shutdown in progress", serviceProc.Name))
+			return
+		}
+		restartServiceInternal(serviceProc)
+	})
 }
 
 func restartServiceInternal(serviceProc *ServiceProcess) {
-	if globalConfig == nil {
+	config := currentConfig()
+	if config == nil {
 		_error(fmt.Sprintf("Cannot restart service '%s': no global config", serviceProc.Name))
 		return
 	}
 
-	if shutdownCtx.Err() != nil {
+	if shutdownContext().Err() != nil {
 		_info(fmt.Sprintf("Skipping restart of '%s' - shutdown in progress", serviceProc.Name))
 		return
 	}
 
 	serviceProc.LastRestart = time.Now()
-	maxLength := getLongestServiceNameLength(globalConfig.Services)
+	maxLength := getLongestServiceNameLength(config.Services)
 
 	_info(fmt.Sprintf("Starting restart of service '%s'", serviceProc.Name))
 
 	go func() {
-		if err := startServiceWithPTY(serviceProc.Config, maxLength, globalConfig.Timeouts); err != nil {
+		if err := startService(&serviceProc.Config, maxLength, config.Timeouts); err != nil {
 			_error(fmt.Sprintf("Error restarting service '%s': %v", serviceProc.Name, err))
 		}
 	}()
